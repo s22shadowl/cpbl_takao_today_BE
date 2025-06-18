@@ -24,7 +24,7 @@ def init_db():
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS game_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cpbl_game_id TEXT UNIQUE,         -- CPBL 官網的比賽唯一ID (如果有的話，非常有用)
+        cpbl_game_id TEXT UNIQUE,         -- CPBL 官網的比賽唯一ID
         game_date TEXT NOT NULL,          -- YYYY-MM-DD
         game_time TEXT,                   -- HH:MM
         home_team TEXT NOT NULL,
@@ -75,7 +75,7 @@ def init_db():
         sacrifice_flies INTEGER DEFAULT 0,     -- 犧牲飛球 SF
         gidp INTEGER DEFAULT 0,                -- 滾地球雙殺打 GIDP
         
-        -- 該場比賽結束後的累積數據 (來自範例)
+        -- 該場比賽結束後的累積數據
         avg_cumulative REAL,                   -- 累積打擊率 AVG
         obp_cumulative REAL,                   -- 累積上壘率 OBP
         slg_cumulative REAL,                   -- 累積長打率 SLG
@@ -112,6 +112,55 @@ def init_db():
         UNIQUE(player_game_summary_id, sequence_in_game) -- 同一個球員的同一次打席記錄應唯一
     )
     ''')
+
+    # 4. 球員球季累積數據表 (player_season_stats)
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS player_season_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        player_name TEXT NOT NULL UNIQUE,
+        team_name TEXT,
+        data_retrieved_date TEXT,
+        -- 主要統計數據
+        games_played INTEGER DEFAULT 0,
+        plate_appearances INTEGER DEFAULT 0,
+        at_bats INTEGER DEFAULT 0,
+        runs_scored INTEGER DEFAULT 0,
+        hits INTEGER DEFAULT 0,
+        rbi INTEGER DEFAULT 0,
+        homeruns INTEGER DEFAULT 0,
+        -- 安打類型
+        singles INTEGER DEFAULT 0,
+        doubles INTEGER DEFAULT 0,
+        triples INTEGER DEFAULT 0,
+        -- 其他打擊數據
+        total_bases INTEGER DEFAULT 0,
+        strikeouts INTEGER DEFAULT 0,
+        stolen_bases INTEGER DEFAULT 0,
+        gidp INTEGER DEFAULT 0,
+        sacrifice_hits INTEGER DEFAULT 0,
+        sacrifice_flies INTEGER DEFAULT 0,
+        -- 上壘相關
+        walks INTEGER DEFAULT 0,
+        intentional_walks INTEGER DEFAULT 0,
+        hit_by_pitch INTEGER DEFAULT 0,
+        -- 跑壘相關
+        caught_stealing INTEGER DEFAULT 0,
+        -- 出局分析
+        ground_outs INTEGER DEFAULT 0,
+        fly_outs INTEGER DEFAULT 0,
+        -- 比率數據
+        avg REAL,
+        obp REAL,
+        slg REAL,
+        ops REAL,
+        go_ao_ratio REAL,
+        sb_percentage REAL,
+        -- 指標數據
+        silver_slugger_index REAL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     
     # 可以考慮為常用的查詢欄位建立索引，以提高查詢效能
     # 例如：球員姓名、比賽日期等
