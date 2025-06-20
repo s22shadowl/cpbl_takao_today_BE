@@ -74,6 +74,7 @@ def init_db():
         sacrifice_hits INTEGER DEFAULT 0,      -- 犧牲觸擊 SH
         sacrifice_flies INTEGER DEFAULT 0,     -- 犧牲飛球 SF
         gidp INTEGER DEFAULT 0,                -- 滾地球雙殺打 GIDP
+        errors INTEGER DEFAULT 0,
         
         -- 該場比賽結束後的累積數據
         avg_cumulative REAL,                   -- 累積打擊率 AVG
