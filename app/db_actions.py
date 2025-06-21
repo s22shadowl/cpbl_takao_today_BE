@@ -90,3 +90,27 @@ def store_player_game_data(conn, game_id, all_players_data):
             conn.rollback()
 
     conn.commit()
+
+def get_games_by_date(conn, date_str):
+    """根據日期查詢比賽結果。"""
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM game_results WHERE game_date = ? ORDER BY game_time", (date_str,))
+    games = cursor.fetchall()
+    return games
+
+def get_player_game_summaries(conn, player_name, limit=30):
+    """根據球員姓名查詢最近的比賽表現總結。"""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM player_game_summary WHERE player_name = ? ORDER BY game_id DESC LIMIT ?",
+        (player_name, limit)
+    )
+    summaries = cursor.fetchall()
+    return summaries
+
+def get_player_season_stats(conn, player_name):
+    """根據球員姓名查詢最新的球季累積數據。"""
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM player_season_stats WHERE player_name = ?", (player_name,))
+    stats = cursor.fetchone()
+    return stats

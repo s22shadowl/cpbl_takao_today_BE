@@ -1,62 +1,90 @@
-from pydantic import BaseModel, Field
+# app/models.py
+
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 import datetime
 
-class PlayerDailyStatBase(BaseModel):
-    player_name: str
-    game_date: str # YYYY-MM-DD
-    team: Optional[str] = None
-    opponent: Optional[str] = None
-    at_bats: Optional[int] = Field(default=0)
-    runs: Optional[int] = Field(default=0)
-    hits: Optional[int] = Field(default=0)
-    rbis: Optional[int] = Field(default=0)
-    homeruns: Optional[int] = Field(default=0)
-    strikeouts: Optional[int] = Field(default=0)
-    walks: Optional[int] = Field(default=0)
-    stolen_bases: Optional[int] = Field(default=0)
-    avg: Optional[float] = None
-    obp: Optional[float] = None
-    slg: Optional[float] = None
-    pitching_wins: Optional[int] = Field(default=0)
-    pitching_losses: Optional[int] = Field(default=0)
-    pitching_saves: Optional[int] = Field(default=0)
-    innings_pitched: Optional[str] = None # e.g., "6.1"
-    pitching_hits_allowed: Optional[int] = Field(default=0)
-    pitching_runs_allowed: Optional[int] = Field(default=0)
-    pitching_earned_runs: Optional[int] = Field(default=0)
-    pitching_walks: Optional[int] = Field(default=0)
-    pitching_strikeouts: Optional[int] = Field(default=0)
-    era: Optional[float] = None
-    whip: Optional[float] = None
-
-class PlayerDailyStat(PlayerDailyStatBase):
+class PlayerGameSummary(BaseModel):
     id: int
+    game_id: int
+    player_name: str
+    team_name: Optional[str] = None
+    batting_order: Optional[str] = None
+    position: Optional[str] = None
+    plate_appearances: int
+    at_bats: int
+    runs_scored: int
+    hits: int
+    doubles: int
+    triples: int
+    homeruns: int
+    rbi: int
+    walks: int
+    intentional_walks: int
+    hit_by_pitch: int
+    strikeouts: int
+    stolen_bases: int
+    caught_stealing: int
+    sacrifice_hits: int
+    sacrifice_flies: int
+    gidp: int
+    errors: int
+    avg_cumulative: Optional[float] = None
+    at_bat_results_summary: Optional[str] = None
     created_at: datetime.datetime
 
-    class Config:
-        orm_mode = True # 讓 Pydantic 可以從 ORM 物件 (或類似字典的 row 物件) 讀取數據
+    model_config = ConfigDict(from_attributes=True)
 
-class GameResultBase(BaseModel):
-    game_date: str # YYYY-MM-DD
-    game_time: Optional[str] = None # HH:MM
+class GameResult(BaseModel):
+    id: int
+    cpbl_game_id: Optional[str] = None
+    game_date: str
+    game_time: Optional[str] = None
     home_team: str
     away_team: str
     home_score: Optional[int] = None
     away_score: Optional[int] = None
     venue: Optional[str] = None
     status: Optional[str] = None
-    winning_pitcher: Optional[str] = None
-    losing_pitcher: Optional[str] = None
-    save_pitcher: Optional[str] = None
-    mvp: Optional[str] = None
+    
+    model_config = ConfigDict(from_attributes=True)
 
-class GameResult(GameResultBase):
-    id: int
-    created_at: datetime.datetime
-
-    class Config:
-        orm_mode = True
-
-class Message(BaseModel): # 用於簡單的回應訊息
+class Message(BaseModel):
     message: str
+class PlayerSeasonStats(BaseModel):
+    id: int
+    player_name: str
+    team_name: Optional[str] = None
+    data_retrieved_date: Optional[str] = None
+    games_played: int
+    plate_appearances: int
+    at_bats: int
+    runs_scored: int
+    hits: int
+    rbi: int
+    homeruns: int
+    singles: int
+    doubles: int
+    triples: int
+    total_bases: int
+    strikeouts: int
+    stolen_bases: int
+    gidp: int
+    sacrifice_hits: int
+    sacrifice_flies: int
+    walks: int
+    intentional_walks: int
+    hit_by_pitch: int
+    caught_stealing: int
+    ground_outs: int
+    fly_outs: int
+    avg: Optional[float] = None
+    obp: Optional[float] = None
+    slg: Optional[float] = None
+    ops: Optional[float] = None
+    go_ao_ratio: Optional[float] = None
+    sb_percentage: Optional[float] = None
+    silver_slugger_index: Optional[float] = None
+    updated_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True)
