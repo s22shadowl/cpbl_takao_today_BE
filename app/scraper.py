@@ -1,7 +1,5 @@
 # app/scraper.py
 
-print("--- SCRIPT EXECUTION STARTED ---") 
-
 import datetime
 import time
 import logging
@@ -10,19 +8,23 @@ import os
 
 from app import config
 from app.core import fetcher
-from app.core import parser as html_parser 
-from app.db_actions import (
-    store_game_and_get_id,
-    update_player_season_stats,
-    store_player_game_data,
-)
+from app.core import parser as html_parser
+import app.db_actions as db_actions
 from app.db import get_db_connection
 
-
+# --- 【日誌設定】 ---
 LOG_DIR = "logs"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s', handlers=[logging.FileHandler(os.path.join(LOG_DIR, "scraper.log"), mode='a', encoding='utf-8'), logging.StreamHandler()])
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(module)s - %(message)s', 
+    handlers=[
+        logging.FileHandler(os.path.join(LOG_DIR, "scraper.log"), mode='a', encoding='utf-8'), 
+        logging.StreamHandler()
+    ]
+)
+# --- 【日誌設定】 ---
 
 # --- 主要爬蟲邏輯函式 ---
 
@@ -37,7 +39,9 @@ def scrape_and_store_season_stats():
     logging.info(f"--- 開始抓取球季累積數據，URL: {team_stats_url} ---")
     
     html_content = fetcher.get_dynamic_page_content(team_stats_url, wait_for_selector="div.RecordTable")
-    if not html_content: return
+    if not html_content:
+        logging.error("無法獲取球隊數據頁面內容。")
+        return
     
     season_stats_list = html_parser.parse_season_stats_page(html_content)
     if not season_stats_list:
@@ -46,9 +50,10 @@ def scrape_and_store_season_stats():
         
     conn = get_db_connection()
     try:
-        update_player_season_stats(conn, season_stats_list)
+        db_actions.update_player_season_stats(conn, season_stats_list)
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
     
     logging.info(f"--- 球季累積數據抓取完畢 ---")
 
@@ -61,31 +66,42 @@ def _process_filtered_games(games_to_process):
 
     logging.info(f"準備處理 {len(games_to_process)} 場已篩選的比賽...")
     conn = get_db_connection()
-    for game_info in games_to_process:
-        if game_info.get('status') != "已完成":
-            logging.info(f"跳過未完成的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})")
-            continue
+    try:
+        for game_info in games_to_process:
+            if game_info.get('status') != "已完成":
+                logging.info(f"跳過未完成的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})")
+                continue
 
-        if config.TARGET_TEAM_NAME in [game_info.get('home_team'), game_info.get('away_team')]:
-            logging.info(f"處理目標球隊 [{config.TARGET_TEAM_NAME}] 的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-            
-            game_id_in_db = store_game_and_get_id(conn, game_info)
-            if not game_id_in_db: continue
-            
-            box_score_url = game_info.get('box_score_url')
-            if not box_score_url: continue
-            
-            box_score_html = fetcher.get_dynamic_page_content(box_score_url, wait_for_selector="div.GameBoxDetail")
-            time.sleep(config.FRIENDLY_SCRAPING_DELAY)
+            if config.TARGET_TEAM_NAME in [game_info.get('home_team'), game_info.get('away_team')]:
+                logging.info(f"處理目標球隊 [{config.TARGET_TEAM_NAME}] 的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
+                
+                game_id_in_db = db_actions.store_game_and_get_id(conn, game_info)
+                if not game_id_in_db:
+                    logging.warning(f"未能儲存比賽結果或獲取 DB game_id，跳過處理此比賽。")
+                    continue
 
-            if box_score_html:
-                all_players_data = html_parser.parse_box_score_page(box_score_html)
-                if all_players_data:
-                    store_player_game_data(conn, game_id_in_db, all_players_data)
-    conn.close()
+                box_score_url = game_info.get('box_score_url')
+                if not box_score_url:
+                    logging.warning(f"比賽 (DB game_id: {game_id_in_db}) 缺少 Box Score URL。")
+                    continue
+                
+                box_score_html = fetcher.get_dynamic_page_content(box_score_url, wait_for_selector="div.GameBoxDetail")
+                time.sleep(config.FRIENDLY_SCRAPING_DELAY)
+
+                if box_score_html:
+                    # 【修改處】使用新的別名 html_parser
+                    all_players_data = html_parser.parse_box_score_page(box_score_html)
+                    if all_players_data:
+                        db_actions.store_player_game_data(conn, game_id_in_db, all_players_data)
+            else:
+                logging.info(f"跳過非目標球隊的比賽: {game_info.get('away_team')} @ {game_info.get('home_team')}")
+    finally:
+        if conn:
+            conn.close()
 
 
 # --- 主要的、可被外部呼叫的任務函式 ---
+
 def scrape_single_day(specific_date=None):
     """【功能一】專門抓取並處理指定單日的比賽數據。"""
     today = datetime.date.today()
@@ -126,11 +142,10 @@ def scrape_entire_month(month_str=None):
 
     html_content = fetcher.fetch_schedule_page(target_date_obj.year, target_date_obj.month)
     if not html_content: return
-
+        
     all_month_games = html_parser.parse_schedule_page(html_content, target_date_obj.year)
     
     if target_date_obj.year == today.year and target_date_obj.month == today.month:
-        logging.info(f"目標為當前月份，將只處理 {today.strftime('%Y-%m-%d')} 及之前的比賽。")
         games_to_process = [game for game in all_month_games if datetime.datetime.strptime(game['game_date'], "%Y-%m-%d").date() <= today]
         _process_filtered_games(games_to_process)
     else:
@@ -165,6 +180,7 @@ def scrape_entire_year(year_str=None):
 
 # --- 命令列執行入口 ---
 if __name__ == '__main__':
+    # 此處的 parser 變數只作用在此區塊，不會與上方導入的模組衝突
     parser = argparse.ArgumentParser(description="CPBL 數據爬蟲手動執行工具")
     subparsers = parser.add_subparsers(dest='mode', help='執行模式 (daily, monthly, yearly)', required=True)
 
