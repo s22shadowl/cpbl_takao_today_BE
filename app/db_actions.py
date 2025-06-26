@@ -5,40 +5,78 @@ import sqlite3
 import datetime
 
 def store_game_and_get_id(conn, game_info):
-    """將單場比賽概要資訊存入 game_results 並返回資料庫中的 id。"""
+    """
+    將單場比賽概要資訊存入 game_results 表格。
+    如果比賽記錄已存在，則不進行任何操作。
+    無論如何，都會查詢並返回該筆記錄在資料庫中的主鍵 id。
+
+    :param conn: 資料庫連線物件
+    :param game_info: 包含單場比賽資訊的字典
+    :return: 該筆比賽記錄在資料庫中的 id (int)，如果失敗則返回 None
+    """
     cursor = conn.cursor()
     try:
-        fields = ['cpbl_game_id', 'game_date', 'game_time', 'home_team', 'away_team', 'home_score', 'away_score', 'venue', 'status']
+        fields = [
+            'cpbl_game_id', 'game_date', 'game_time', 'home_team', 'away_team',
+            'home_score', 'away_score', 'venue', 'status'
+        ]
         values = tuple(game_info.get(f) for f in fields)
+
         cursor.execute(f"INSERT OR IGNORE INTO game_results ({', '.join(fields)}) VALUES ({', '.join(['?'] * len(fields))})", values)
-        conn.commit()
         
         if game_info.get('cpbl_game_id'):
             cursor.execute("SELECT id FROM game_results WHERE cpbl_game_id = ?", (game_info['cpbl_game_id'],))
             row = cursor.fetchone()
-            return row[0] if row else None
+            if row:
+                conn.commit()
+                return row[0]
+        
+        # 如果沒有 cpbl_game_id 或查詢失敗，回滾並返回 None
+        conn.rollback()
+        return None
+
     except sqlite3.Error as e:
         logging.error(f"儲存比賽結果時出錯: {e}")
         conn.rollback()
     return None
 
 def update_player_season_stats(conn, season_stats_list):
-    """使用 executemany 批次更新多位球員的球季累積數據。"""
-    if not season_stats_list: return
+    """
+    使用 executemany 批次更新多位球員的球季累積數據。
+    採用「先刪除後插入」的策略，確保數據永遠是最新。
+    """
+    if not season_stats_list:
+        return
+
     logging.info(f"準備批次更新 {len(season_stats_list)} 位球員的球季累積數據...")
     cursor = conn.cursor()
     
-    db_fields_ordered = ['player_name', 'team_name', 'data_retrieved_date', 'games_played', 'plate_appearances', 'at_bats', 'runs_scored', 'hits', 'rbi', 'homeruns', 'singles', 'doubles', 'triples', 'total_bases', 'strikeouts', 'stolen_bases', 'gidp', 'sacrifice_hits', 'sacrifice_flies', 'walks', 'intentional_walks', 'hit_by_pitch', 'caught_stealing', 'ground_outs', 'fly_outs', 'avg', 'obp', 'slg', 'ops', 'go_ao_ratio', 'sb_percentage', 'silver_slugger_index']
+    db_fields_ordered = [
+        'player_name', 'team_name', 'data_retrieved_date', 'games_played', 'plate_appearances', 
+        'at_bats', 'runs_scored', 'hits', 'rbi', 'homeruns', 'singles', 'doubles', 'triples',
+        'total_bases', 'strikeouts', 'stolen_bases', 'gidp', 'sacrifice_hits', 
+        'sacrifice_flies', 'walks', 'intentional_walks', 'hit_by_pitch', 'caught_stealing',
+        'ground_outs', 'fly_outs', 'avg', 'obp', 'slg', 'ops', 'go_ao_ratio', 
+        'sb_percentage', 'silver_slugger_index'
+    ]
     
     data_to_insert = []
     for stats in season_stats_list:
         stats['data_retrieved_date'] = datetime.date.today().strftime("%Y-%m-%d")
-        data_to_insert.append(tuple(stats.get(field, 0) for field in db_fields_ordered))
+        # 準備元組，若字典中缺少某個 key，則提供安全的預設值
+        values = tuple(stats.get(field, 0.0 if any(k in field for k in ['avg', 'obp', 'slg', 'ops', 'ratio', 'percentage', 'index']) else 0) for field in db_fields_ordered)
+        data_to_insert.append(values)
     
     try:
+        # 使用 executemany 一次性刪除所有舊記錄
         player_names_to_delete = [(stats['player_name'],) for stats in season_stats_list]
         cursor.executemany("DELETE FROM player_season_stats WHERE player_name = ?", player_names_to_delete)
-        cursor.executemany(f"INSERT INTO player_season_stats ({', '.join(db_fields_ordered)}) VALUES ({', '.join(['?'] * len(db_fields_ordered))})", data_to_insert)
+        
+        # 使用 executemany 一次性插入所有新記錄，效能更佳
+        cursor.executemany(
+            f"INSERT INTO player_season_stats ({', '.join(db_fields_ordered)}) VALUES ({', '.join(['?'] * len(db_fields_ordered))})",
+            data_to_insert
+        )
         conn.commit()
         logging.info(f"成功批次更新 {len(data_to_insert)} 筆球員球季數據。")
     except sqlite3.Error as e:
@@ -46,16 +84,13 @@ def update_player_season_stats(conn, season_stats_list):
         conn.rollback()
 
 def store_player_game_data(conn, game_id, all_players_data):
-    """儲存多位球員的單場總結與逐打席記錄。"""
+    """【最終修正版】儲存多位球員的單場總結與完整的逐打席記錄。"""
     if not all_players_data: return
     cursor = conn.cursor()
-    
-    all_at_bats_to_insert = []
-
     for player_data in all_players_data:
         summary = player_data.get("summary", {})
-        at_bats = player_data.get("at_bats_list", [])
-        if not summary: continue
+        at_bats_details = player_data.get("at_bats_details", [])
+        if not summary or not at_bats_details: continue
         summary['game_id'] = game_id
 
         try:
@@ -69,48 +104,35 @@ def store_player_game_data(conn, game_id, all_players_data):
                 fetched = cursor.fetchone()
                 if fetched: player_game_summary_id = fetched[0]
 
-            logging.info(f"成功儲存球員 [{summary['player_name']}] 的單場總結數據。")
-            
-            if player_game_summary_id and at_bats:
-                for i, result in enumerate(at_bats):
-                    all_at_bats_to_insert.append((player_game_summary_id, i + 1, result))
-
+            if player_game_summary_id:
+                initial_details = [
+                    (player_game_summary_id, d.get('sequence_in_game'), d.get('result_short'), d.get('inning'))
+                    for d in at_bats_details
+                ]
+                cursor.executemany("INSERT OR IGNORE INTO at_bat_details (player_game_summary_id, sequence_in_game, result_short, inning) VALUES (?, ?, ?, ?)", initial_details)
+                
+                details_to_update = [
+                    (
+                        d.get('outs_before'),
+                        d.get('runners_on_base_before'),
+                        d.get('result_description_full'),
+                        d.get('opposing_pitcher_name'),
+                        d.get('pitch_sequence_details'),
+                        player_game_summary_id,
+                        d.get('sequence_in_game')
+                    ) for d in at_bats_details
+                ]
+                cursor.executemany("""
+                    UPDATE at_bat_details SET
+                        outs_before = ?,
+                        runners_on_base_before = ?,
+                        result_description_full = ?,
+                        opposing_pitcher_name = ?,
+                        pitch_sequence_details = ?
+                    WHERE player_game_summary_id = ? AND sequence_in_game = ?
+                """, details_to_update)
+                logging.info(f"成功更新/儲存球員 [{summary['player_name']}] 的 {len(at_bats_details)} 筆逐打席詳細記錄。")
         except sqlite3.Error as e:
-            logging.error(f"儲存球員 [{summary.get('player_name')}] 的單場比賽數據時出錯: {e}")
+            logging.error(f"儲存球員 [{summary.get('player_name')}] 的單場比賽數據時出錯: {e}", exc_info=True)
             conn.rollback()
-            return # 單一球員出錯時，後續的批次插入也應中止
-
-    # 在所有球員的 at_bats 都收集完畢後，進行一次性的批次插入
-    if all_at_bats_to_insert:
-        try:
-            cursor.executemany("INSERT OR IGNORE INTO at_bat_details (player_game_summary_id, sequence_in_game, result_short) VALUES (?, ?, ?)", all_at_bats_to_insert)
-            logging.info(f"成功批次儲存 {len(all_at_bats_to_insert)} 筆逐打席記錄。")
-        except sqlite3.Error as e:
-            logging.error(f"批次儲存逐打席記錄時出錯: {e}")
-            conn.rollback()
-
     conn.commit()
-
-def get_games_by_date(conn, date_str):
-    """根據日期查詢比賽結果。"""
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM game_results WHERE game_date = ? ORDER BY game_time", (date_str,))
-    games = cursor.fetchall()
-    return games
-
-def get_player_game_summaries(conn, player_name, limit=30):
-    """根據球員姓名查詢最近的比賽表現總結。"""
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM player_game_summary WHERE player_name = ? ORDER BY game_id DESC LIMIT ?",
-        (player_name, limit)
-    )
-    summaries = cursor.fetchall()
-    return summaries
-
-def get_player_season_stats(conn, player_name):
-    """根據球員姓名查詢最新的球季累積數據。"""
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM player_season_stats WHERE player_name = ?", (player_name,))
-    stats = cursor.fetchone()
-    return stats

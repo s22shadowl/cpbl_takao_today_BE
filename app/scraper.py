@@ -5,14 +5,17 @@ import time
 import logging
 import argparse
 import os
+from playwright.sync_api import sync_playwright, expect
+import re
 
+# 專案內部模組導入
 from app import config
 from app.core import fetcher
 from app.core import parser as html_parser
-import app.db_actions as db_actions
+from app import db_actions
 from app.db import get_db_connection
 
-# --- 【日誌設定】 ---
+# --- 日誌設定 ---
 LOG_DIR = "logs"
 if not os.path.exists(LOG_DIR):
     os.makedirs(LOG_DIR)
@@ -24,7 +27,59 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-# --- 【日誌設定】 ---
+
+
+# --- 狀態機輔助函式 ---
+
+def _update_outs_count(description, current_outs):
+    """規則 2: 根據文字描述更新出局數"""
+    outs_match = re.search(r'(\d)人出局', description)
+    if outs_match:
+        return int(outs_match.group(1))
+    return current_outs
+
+def _update_runners_state(current_runners, hitter_name, description):
+    """規則 3: 根據文字描述更新跑者狀態"""
+    runners = list(current_runners)
+    # 處理跑者推進
+    if runners[2] and '三壘跑者' in description and '回本壘得分' in description: runners[2] = None
+    if runners[1]:
+        if '二壘跑者' in description and '上三壘' in description:
+            runners[2] = runners[1]
+            runners[1] = None
+        elif '二壘跑者' in description and '回本壘得分' in description:
+            runners[1] = None
+    if runners[0]:
+        if '一壘跑者' in description and '上三壘' in description:
+            runners[2] = runners[0]
+            runners[0] = None
+        elif '一壘跑者' in description and '上二壘' in description:
+            runners[1] = runners[0]
+            runners[0] = None
+        elif '一壘跑者' in description and '回本壘得分' in description:
+            runners[0] = None
+    # 處理打者上壘
+    if any(keyword in description for keyword in ["一壘安打", "內野安да"]):
+        if runners[0]: # 處理跑者被擠壘
+            if runners[1]: runners[2] = runners[1]
+            runners[1] = runners[0]
+        runners[0] = hitter_name
+    elif "二壘安打" in description:
+        if runners[0]: runners[1] = runners[0]
+        runners[1] = hitter_name
+        runners[0] = None
+    elif "三壘安打" in description:
+        runners[2] = hitter_name
+        runners[0], runners[1] = None, None
+    elif any(keyword in description for keyword in ["四壞球", "觸身死球"]):
+        if runners[0] and runners[1]: runners[2] = runners[1]
+        if runners[0]: runners[1] = runners[0]
+        runners[0] = hitter_name
+    elif "失誤上" in description:
+        if "上二壘" in description: runners[1] = hitter_name
+        elif "上三壘" in description: runners[2] = hitter_name
+        else: runners[0] = hitter_name
+    return runners
 
 # --- 主要爬蟲邏輯函式 ---
 
@@ -57,51 +112,114 @@ def scrape_and_store_season_stats():
     
     logging.info(f"--- 球季累積數據抓取完畢 ---")
 
-
 def _process_filtered_games(games_to_process):
-    """【內部輔助函式】處理已篩選的比賽列表，儲存數據並抓取 Box Score。"""
-    if not games_to_process:
-        logging.info("此時間範圍內沒有需要處理的已完成比賽。")
-        return
-
-    logging.info(f"準備處理 {len(games_to_process)} 場已篩選的比賽...")
+    """【最終修正版】處理比賽列表，採用最終正確的「逐局切換、展開、解析」互動邏輯。"""
+    if not games_to_process: return
+    logging.info(f"準備處理 {len(games_to_process)} 場比賽...")
     conn = get_db_connection()
     try:
-        for game_info in games_to_process:
-            if game_info.get('status') != "已完成":
-                logging.info(f"跳過未完成的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})")
-                continue
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False, slow_mo=300)
+            page = browser.new_page()
+            for game_info in games_to_process:
+                try:
+                    if game_info.get('status') != "已完成": continue
+                    if config.TARGET_TEAM_NAME not in [game_info.get('home_team'), game_info.get('away_team')]: continue
+                    
+                    logging.info(f"處理目標球隊比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
+                    game_id_in_db = db_actions.store_game_and_get_id(conn, game_info)
+                    if not game_id_in_db: continue
+                    box_score_url = game_info.get('box_score_url')
+                    if not box_score_url: continue
+                    
+                    page.goto(box_score_url, timeout=config.PLAYWRIGHT_TIMEOUT)
+                    page.wait_for_selector("div.GameBoxDetail", state='visible', timeout=30000)
+                    all_players_data = html_parser.parse_box_score_page(page.content())
+                    if not all_players_data: continue
+                    
+                    live_url = box_score_url.replace('/box?', '/box/live?')
+                    page.goto(live_url, wait_until="load", timeout=config.PLAYWRIGHT_TIMEOUT)
+                    page.wait_for_selector("div.InningPlaysGroup", timeout=15000)
+                    
+                    full_game_events = []
+                    inning_buttons = page.locator("div.InningPlaysGroup div.tabs > ul > li").all()
+                    
+                    for i, inning_li in enumerate(inning_buttons):
+                        inning_num = i + 1
+                        logging.info(f"處理第 {inning_num} 局...")
+                        inning_li.click()
+                        expect(inning_li).to_have_class(re.compile(r'active'))
+                        page.wait_for_timeout(250)
 
-            if config.TARGET_TEAM_NAME in [game_info.get('home_team'), game_info.get('away_team')]:
-                logging.info(f"處理目標球隊 [{config.TARGET_TEAM_NAME}] 的比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-                
-                game_id_in_db = db_actions.store_game_and_get_id(conn, game_info)
-                if not game_id_in_db:
-                    logging.warning(f"未能儲存比賽結果或獲取 DB game_id，跳過處理此比賽。")
-                    continue
+                        active_inning_content = page.locator("div.InningPlaysGroup div.tab_cont.active")
 
-                box_score_url = game_info.get('box_score_url')
-                if not box_score_url:
-                    logging.warning(f"比賽 (DB game_id: {game_id_in_db}) 缺少 Box Score URL。")
-                    continue
-                
-                box_score_html = fetcher.get_dynamic_page_content(box_score_url, wait_for_selector="div.GameBoxDetail")
-                time.sleep(config.FRIENDLY_SCRAPING_DELAY)
+                        is_target_home = config.TARGET_TEAM_NAME == game_info.get('home_team')
+                        target_half_inning_selector = "section.bot" if is_target_home else "section.top"
+                        
+                        half_inning_section = active_inning_content.locator(target_half_inning_selector)
+                        if half_inning_section.count() > 0:
+                            expand_buttons = half_inning_section.locator('a[title="展開打擊紀錄"]').all()
+                            logging.info(f"處理第 {inning_num} 局 [{config.TARGET_TEAM_NAME}]，找到 {len(expand_buttons)} 個打席，準備展開...")
+                            for button in expand_buttons:
+                                try:
+                                    if button.is_visible(timeout=500):
+                                        button.click(timeout=500)
+                                except Exception: pass
+                        
+                        inning_html = active_inning_content.inner_html()
+                        parsed_events = html_parser.parse_active_inning_details(inning_html, inning_num)
+                        full_game_events.extend(parsed_events)
+                    
+                    all_at_bats_details_enriched = []
+                    player_pa_counter = {p["summary"]["player_name"]: 0 for p in all_players_data}
+                    
+                    inning_state = {}
+                    for event in full_game_events:
+                        inning = event.get('inning')
+                        if inning not in inning_state:
+                            inning_state[inning] = {'outs': 0, 'runners': [None, None, None]}
 
-                if box_score_html:
-                    # 【修改處】使用新的別名 html_parser
-                    all_players_data = html_parser.parse_box_score_page(box_score_html)
-                    if all_players_data:
-                        db_actions.store_player_game_data(conn, game_id_in_db, all_players_data)
-            else:
-                logging.info(f"跳過非目標球隊的比賽: {game_info.get('away_team')} @ {game_info.get('home_team')}")
+                        current_outs = inning_state[inning]['outs']
+                        current_runners = inning_state[inning]['runners']
+
+                        outs_before = current_outs
+                        runners_str_list = [base for base, runner in zip(['一壘', '二壘', '三壘'], current_runners) if runner]
+                        runners_on_base_before = "、".join(runners_str_list) + "有人" if runners_str_list else "壘上無人"
+
+                        if event.get('hitter_name') in config.TARGET_PLAYER_NAMES:
+                            hitter = event['hitter_name']
+                            player_pa_counter[hitter] += 1
+                            event['sequence_in_game'] = player_pa_counter[hitter]
+                            event['outs_before'] = outs_before
+                            event['runners_on_base_before'] = runners_on_base_before
+                            all_at_bats_details_enriched.append(event)
+
+                        desc = event.get("description", "")
+                        inning_state[inning]['outs'] = _update_outs_count(desc, current_outs)
+                        inning_state[inning]['runners'] = _update_runners_state(current_runners, event.get("hitter_name"), desc)
+                        if inning_state[inning]['outs'] >= 3:
+                            inning_state[inning+1] = {'outs': 0, 'runners': [None, None, None]}
+
+                    for player_data in all_players_data:
+                        player_name = player_data["summary"]["player_name"]
+                        player_live_details = [d for d in all_at_bats_details_enriched if d.get('hitter_name') == player_name]
+                        player_data["at_bats_details"] = []
+                        for i, result_short in enumerate(player_data["at_bats_list"]):
+                            seq = i + 1
+                            merged_at_bat = {"result_short": result_short, "sequence_in_game": seq}
+                            detail_match = next((d for d in player_live_details if d.get('sequence_in_game') == seq), None)
+                            if detail_match: merged_at_bat.update(detail_match)
+                            player_data["at_bats_details"].append(merged_at_bat)
+                            
+                    db_actions.store_player_game_data(conn, game_id_in_db, all_players_data)
+
+                except Exception as e:
+                    logging.error(f"處理比賽 {game_info.get('cpbl_game_id')} 時發生未知錯誤: {e}", exc_info=True)
     finally:
-        if conn:
-            conn.close()
+            if conn: conn.close()
 
 
-# --- 主要的、可被外部呼叫的任務函式 ---
-
+# --- 主功能函式 ---
 def scrape_single_day(specific_date=None):
     """【功能一】專門抓取並處理指定單日的比賽數據。"""
     today = datetime.date.today()
@@ -180,7 +298,6 @@ def scrape_entire_year(year_str=None):
 
 # --- 命令列執行入口 ---
 if __name__ == '__main__':
-    # 此處的 parser 變數只作用在此區塊，不會與上方導入的模組衝突
     parser = argparse.ArgumentParser(description="CPBL 數據爬蟲手動執行工具")
     subparsers = parser.add_subparsers(dest='mode', help='執行模式 (daily, monthly, yearly)', required=True)
 
@@ -195,7 +312,6 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
 
-    # 根據參數調用對應的功能函式
     if args.mode == 'daily':
         if args.date:
             try:
