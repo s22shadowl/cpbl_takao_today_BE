@@ -3,10 +3,10 @@
 import datetime
 import time
 import logging
-import argparse
 import os
 from playwright.sync_api import sync_playwright, expect
 import re
+from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 # 專案內部模組導入
 from app import config
@@ -27,59 +27,6 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
-
-
-# --- 狀態機輔助函式 ---
-
-def _update_outs_count(description, current_outs):
-    """規則 2: 根據文字描述更新出局數"""
-    outs_match = re.search(r'(\d)人出局', description)
-    if outs_match:
-        return int(outs_match.group(1))
-    return current_outs
-
-def _update_runners_state(current_runners, hitter_name, description):
-    """規則 3: 根據文字描述更新跑者狀態"""
-    runners = list(current_runners)
-    # 處理跑者推進
-    if runners[2] and '三壘跑者' in description and '回本壘得分' in description: runners[2] = None
-    if runners[1]:
-        if '二壘跑者' in description and '上三壘' in description:
-            runners[2] = runners[1]
-            runners[1] = None
-        elif '二壘跑者' in description and '回本壘得分' in description:
-            runners[1] = None
-    if runners[0]:
-        if '一壘跑者' in description and '上三壘' in description:
-            runners[2] = runners[0]
-            runners[0] = None
-        elif '一壘跑者' in description and '上二壘' in description:
-            runners[1] = runners[0]
-            runners[0] = None
-        elif '一壘跑者' in description and '回本壘得分' in description:
-            runners[0] = None
-    # 處理打者上壘
-    if any(keyword in description for keyword in ["一壘安打", "內野安да"]):
-        if runners[0]: # 處理跑者被擠壘
-            if runners[1]: runners[2] = runners[1]
-            runners[1] = runners[0]
-        runners[0] = hitter_name
-    elif "二壘安打" in description:
-        if runners[0]: runners[1] = runners[0]
-        runners[1] = hitter_name
-        runners[0] = None
-    elif "三壘安打" in description:
-        runners[2] = hitter_name
-        runners[0], runners[1] = None, None
-    elif any(keyword in description for keyword in ["四壞球", "觸身死球"]):
-        if runners[0] and runners[1]: runners[2] = runners[1]
-        if runners[0]: runners[1] = runners[0]
-        runners[0] = hitter_name
-    elif "失誤上" in description:
-        if "上二壘" in description: runners[1] = hitter_name
-        elif "上三壘" in description: runners[2] = hitter_name
-        else: runners[0] = hitter_name
-    return runners
 
 # --- 主要爬蟲邏輯函式 ---
 
@@ -155,7 +102,7 @@ def _process_filtered_games(games_to_process):
 
                         is_target_home = config.TARGET_TEAM_NAME == game_info.get('home_team')
                         target_half_inning_selector = "section.bot" if is_target_home else "section.top"
-                        
+
                         half_inning_section = active_inning_content.locator(target_half_inning_selector)
                         if half_inning_section.count() > 0:
                             expand_buttons = half_inning_section.locator('a[title="展開打擊紀錄"]').all()
@@ -295,47 +242,3 @@ def scrape_entire_year(year_str=None):
         logging.info(f"處理完 {year_to_scrape}-{month:02d}，稍作等待...")
         time.sleep(config.FRIENDLY_SCRAPING_DELAY)
     logging.info(f"--- [逐年模式] 執行完畢 ---")
-
-# --- 命令列執行入口 ---
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="CPBL 數據爬蟲手動執行工具")
-    subparsers = parser.add_subparsers(dest='mode', help='執行模式 (daily, monthly, yearly)', required=True)
-
-    parser_daily = subparsers.add_parser('daily', help='抓取指定單日的數據 (預設為今天)')
-    parser_daily.add_argument('date', nargs='?', default=None, help="可選，指定日期，格式為YYYY-MM-DD")
-
-    parser_monthly = subparsers.add_parser('monthly', help='抓取指定月份的所有數據 (預設為本月)')
-    parser_monthly.add_argument('month', nargs='?', default=None, help="可選，指定月份，格式為YYYY-MM")
-    
-    parser_yearly = subparsers.add_parser('yearly', help='抓取指定年份的所有數據 (預設為本年)')
-    parser_yearly.add_argument('year', nargs='?', default=None, help="可選，指定年份，格式為YYYY")
-    
-    args = parser.parse_args()
-
-    if args.mode == 'daily':
-        if args.date:
-            try:
-                datetime.datetime.strptime(args.date, "%Y-%m-%d")
-                scrape_single_day(specific_date=args.date)
-            except ValueError:
-                print("\n錯誤：日期格式不正確。請使用YYYY-MM-DD 格式。\n")
-        else:
-            scrape_single_day()
-    elif args.mode == 'monthly':
-        if args.month:
-            try:
-                datetime.datetime.strptime(args.month, "%Y-%m")
-                scrape_entire_month(month_str=args.month)
-            except ValueError:
-                print("\n錯誤：月份格式不正確。請使用YYYY-MM 格式。\n")
-        else:
-            scrape_entire_month()
-    elif args.mode == 'yearly':
-        if args.year:
-            try:
-                if not (args.year.isdigit() and len(args.year) == 4): raise ValueError
-                scrape_entire_year(year_str=args.year)
-            except ValueError:
-                print("\n錯誤：年份格式不正確。請使用YYYY 格式（例如：2025）。\n")
-        else:
-            scrape_entire_year()

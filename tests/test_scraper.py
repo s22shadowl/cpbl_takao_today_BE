@@ -1,82 +1,163 @@
-# tests/test_scraper.py
-
 import pytest
-from unittest.mock import MagicMock
-import datetime # <--- 修正二：加入了缺少的 import
+import datetime
+from unittest.mock import MagicMock, call, patch
 
 from app import scraper, config
 
 @pytest.fixture
-def mock_modules(mocker):
-    """一個 pytest fixture，用於模擬所有外部依賴模組。"""
-    # 模擬整個模組，這樣 scraper.py 內部對這些模組的任何呼叫都會被攔截
-    mock_fetcher = mocker.patch('app.scraper.fetcher')
-    mock_parser = mocker.patch('app.scraper.html_parser') # 注意：要 patch scraper 裡面的 html_parser
+def mock_modules_with_playwright(mocker):
+    """
+    一個擴充版的 fixture，除了模擬基本模組外，還深度模擬了 Playwright 的操作鏈。
+    """
+    # 模擬基本模組
     mock_db_actions = mocker.patch('app.scraper.db_actions')
     mock_get_conn = mocker.patch('app.scraper.get_db_connection')
-    
     mock_conn = MagicMock()
     mock_get_conn.return_value = mock_conn
+    
+    # 深度模擬 Playwright
+    mock_sync_playwright = mocker.patch('app.scraper.sync_playwright')
+    mock_p = MagicMock()
+    mock_browser = MagicMock()
+    mock_page = MagicMock()
 
-    # 將 mocker 也回傳，方便其他測試使用
+    mock_sync_playwright.return_value.__enter__.return_value = mock_p
+    mock_p.chromium.launch.return_value = mock_browser
+    mock_browser.new_page.return_value = mock_page
+
+    # 【修正】將 scraper 中使用的 expect 函式也模擬掉，避免 ValueError
+    mocker.patch('app.scraper.expect')
+
+    # 模擬狀態機函式，讓它們使用真實邏輯
+    mocker.patch('app.scraper._update_outs_count', side_effect=scraper._update_outs_count)
+    mocker.patch('app.scraper._update_runners_state', side_effect=scraper._update_runners_state)
+
     return {
-        "fetcher": mock_fetcher,
-        "parser": mock_parser,
         "db_actions": mock_db_actions,
         "conn": mock_conn,
-        "mocker": mocker  
+        "page": mock_page,
+        "mocker": mocker,
+        "parser": mocker.patch('app.scraper.html_parser'),
+        "fetcher": mocker.patch('app.scraper.fetcher')
     }
 
-def test_scrape_single_day_flow(mock_modules):
-    """測試 scrape_single_day 的主要流程是否正確。"""
+def test_process_filtered_games_e2e_flow(mock_modules_with_playwright):
+    """
+    端到端測試 _process_filtered_games 的完整流程，
+    包含 Playwright 互動、狀態機計算與最終資料合併邏輯。
+    """
     # 1. 準備 (Arrange)
-    fake_games_list = [
-        {'game_date': '2025-06-21', 'cpbl_game_id': 'DUMMY01', 'home_team': config.TARGET_TEAM_NAME, 'status': '已完成', 'box_score_url': 'http://fake.box.url/1'},
-    ]
-    fake_player_data = [{"summary": {"player_name": "王柏融"}, "at_bats_list": []}]
+    mock_page = mock_modules_with_playwright["page"]
+    mock_parser = mock_modules_with_playwright["parser"]
+    mock_db_actions = mock_modules_with_playwright["db_actions"]
     
-    # 【修正一】設定所有會被呼叫的 fetcher 函式的回傳值
-    mock_modules["fetcher"].get_dynamic_page_content.return_value = "<html></html>"
-    mock_modules["fetcher"].fetch_schedule_page.return_value = "<html></html>"
-    mock_modules["parser"].parse_season_stats_page.return_value = [] # 假設回傳空，避免進入 db
-    mock_modules["parser"].parse_schedule_page.return_value = fake_games_list
-    mock_modules["parser"].parse_box_score_page.return_value = fake_player_data
-    mock_modules["db_actions"].store_game_and_get_id.return_value = 1
+    mock_parser.parse_box_score_page.return_value = [
+        {"summary": {"player_name": "吳念庭"}, "at_bats_list": ["一安", "左飛"]},
+        {"summary": {"player_name": "魔鷹"}, "at_bats_list": ["二安"]},
+    ]
+
+    # --- 建立更精確的 Playwright 模擬 ---
+    mock_inning1_li, mock_inning2_li = MagicMock(), MagicMock()
+    mock_inning1_content_locator, mock_inning2_content_locator = MagicMock(), MagicMock()
+    mock_inning1_half_section, mock_inning2_half_section = MagicMock(), MagicMock()
+
+    # 設定 page.locator 的回傳行為
+    mock_page.locator.side_effect = [
+        MagicMock(all=MagicMock(return_value=[mock_inning1_li, mock_inning2_li])), # for inning_buttons
+        mock_inning1_content_locator,
+        mock_inning2_content_locator
+    ]
+    
+    # 設定每一局內容區塊的內部 locator 行為
+    mock_inning1_content_locator.locator.return_value = mock_inning1_half_section
+    mock_inning1_half_section.count.return_value = 1
+    mock_inning1_half_section.locator.return_value.all.return_value = [MagicMock()]
+    mock_inning1_content_locator.inner_html.return_value = "<html>inning 1 content</html>"
+
+    mock_inning2_content_locator.locator.return_value = mock_inning2_half_section
+    mock_inning2_half_section.count.return_value = 1
+    mock_inning2_half_section.locator.return_value.all.return_value = [MagicMock()]
+    mock_inning2_content_locator.inner_html.return_value = "<html>inning 2 content</html>"
+    
+    # 模擬 parser 回傳值
+    mock_parser.parse_active_inning_details.side_effect = [
+        [
+            {'inning': 1, 'type': 'at_bat', 'hitter_name': '路人甲', 'description': '造成1人出局'},
+            {'inning': 1, 'type': 'at_bat', 'hitter_name': '吳念庭', 'description': '一壘安打', 'opposing_pitcher_name': '黃子鵬'},
+        ],
+        [
+            {'inning': 2, 'type': 'at_bat', 'hitter_name': '魔鷹', 'description': '二壘安打。1人出局', 'opposing_pitcher_name': '陳冠宇'},
+            {'inning': 2, 'type': 'at_bat', 'hitter_name': '吳念庭', 'description': '左外野飛球出局。2人出局', 'opposing_pitcher_name': '陳冠宇'},
+        ]
+    ]
+
+    mock_db_actions.store_game_and_get_id.return_value = 99
 
     # 2. 執行 (Act)
-    scraper.scrape_single_day(specific_date='2025-06-21')
+    scraper._process_filtered_games([{
+        'status': '已完成', 'home_team': config.TARGET_TEAM_NAME, 'away_team': '敵隊',
+        'cpbl_game_id': 'TEST99', 'box_score_url': 'http://fake.url'
+    }])
 
     # 3. 斷言 (Assert)
-    # 驗證抓取球季數據的函式被呼叫
-    mock_modules["fetcher"].get_dynamic_page_content.assert_any_call(
-        f"{config.TEAM_SCORE_URL}?ClubNo={config.TEAM_CLUB_CODES[config.TARGET_TEAM_NAME]}", 
-        wait_for_selector="div.RecordTable"
-    )
-    # 驗證抓取賽程頁的函式被呼叫
-    mock_modules["fetcher"].fetch_schedule_page.assert_called_once_with(2025, 6)
-    # 驗證抓取 Box Score 的函式被呼叫
-    mock_modules["fetcher"].get_dynamic_page_content.assert_called_with(
-        'http://fake.box.url/1', 
-        wait_for_selector="div.GameBoxDetail"
-    )
-    # 驗證儲存球員數據的函式被呼叫
-    mock_modules["db_actions"].store_player_game_data.assert_called_once_with(mock_modules["conn"], 1, fake_player_data)
+    assert mock_db_actions.store_player_game_data.call_count == 1
+    call_args, _ = mock_db_actions.store_player_game_data.call_args
+    
+    _, final_game_id, final_player_data = call_args
+    assert final_game_id == 99
+    assert len(final_player_data) == 2
 
-def test_scrape_entire_year_skips_future(mock_modules):
-    """測試 scrape_entire_year 在目標是未來年份時，是否會提前中止。"""
-    future_year = str(datetime.date.today().year + 1)
-    scraper.scrape_entire_year(year_str=future_year)
-    mock_modules["fetcher"].fetch_schedule_page.assert_not_called()
+    wu_data = next(p for p in final_player_data if p['summary']['player_name'] == '吳念庭')
+    assert len(wu_data['at_bats_details']) == 2
+    
+    wu_pa1 = wu_data['at_bats_details'][0]
+    assert wu_pa1['result_short'] == '一安'
+    assert wu_pa1['inning'] == 1
+    assert wu_pa1['outs_before'] == 1
+    assert wu_pa1['runners_on_base_before'] == '壘上無人'
+    assert wu_pa1['opposing_pitcher_name'] == '黃子鵬'
 
-def test_scrape_single_day_calls_season_stats(mock_modules):
-    """測試 scrape_single_day 是否會呼叫 scrape_and_store_season_stats。"""
-    mock_modules["fetcher"].fetch_schedule_page.return_value = "<html></html>"
-    mock_modules["parser"].parse_schedule_page.return_value = []
+    wu_pa2 = wu_data['at_bats_details'][1]
+    assert wu_pa2['result_short'] == '左飛'
+    assert wu_pa2['inning'] == 2
+    assert wu_pa2['outs_before'] == 1
+    assert wu_pa2['runners_on_base_before'] == '二壘有人'
+    assert wu_pa2['opposing_pitcher_name'] == '陳冠宇'
+
+
+def test_scrape_single_day_filters_correctly(mocker):
+    """【新增】測試 scrape_single_day 是否能正確過濾出指定日期的比賽"""
+    target_date = "2025-06-25"
+    all_games = [
+        {'game_date': "2025-06-24", 'cpbl_game_id': 'G1'},
+        {'game_date': target_date, 'cpbl_game_id': 'G2'},
+        {'game_date': target_date, 'cpbl_game_id': 'G3'},
+        {'game_date': "2025-06-26", 'cpbl_game_id': 'G4'},
+    ]
+    mocker.patch('app.scraper.scrape_and_store_season_stats')
+    mocker.patch('app.scraper.fetcher.fetch_schedule_page', return_value="<html></html>")
+    mock_parse_schedule = mocker.patch('app.scraper.html_parser.parse_schedule_page', return_value=all_games)
+    mock_process_games = mocker.patch('app.scraper._process_filtered_games')
+
+    scraper.scrape_single_day(specific_date=target_date)
+
+    mock_parse_schedule.assert_called_once()
+    mock_process_games.assert_called_once()
     
-    # 【修正三】直接從 mocker fixture 獲取 spy，而不是從我們自訂的 fixture
-    mocker = mock_modules["mocker"]
-    spy_season_stats = mocker.spy(scraper, 'scrape_and_store_season_stats')
+    call_args, _ = mock_process_games.call_args
+    processed_games_list = call_args[0]
     
-    scraper.scrape_single_day(specific_date='2025-01-01')
+    assert len(processed_games_list) == 2
+    assert processed_games_list[0]['cpbl_game_id'] == 'G2'
+    assert processed_games_list[1]['cpbl_game_id'] == 'G3'
+
+def test_scrape_single_day_aborts_for_future_date(mocker):
+    """【新增】測試當目標日期為未來時，scrape_single_day 是否會中止"""
+    future_date = (datetime.date.today() + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    mock_season_scrape = mocker.patch('app.scraper.scrape_and_store_season_stats')
+    mock_fetch = mocker.patch('app.scraper.fetcher.fetch_schedule_page')
     
-    spy_season_stats.assert_called_once()
+    scraper.scrape_single_day(specific_date=future_date)
+
+    mock_season_scrape.assert_not_called()
+    mock_fetch.assert_not_called()

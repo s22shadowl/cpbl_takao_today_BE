@@ -4,7 +4,9 @@ import pytest
 import sqlite3
 from pathlib import Path
 
+# 導入我們要測試的資料庫操作函式
 from app import db_actions
+# 導入我們需要用來初始化測試資料庫的函式
 from app.db import init_db as init_real_db
 
 @pytest.fixture
@@ -102,8 +104,8 @@ def test_update_player_season_stats(initialized_db):
     
     conn.close()
 
-def test_store_player_game_data(initialized_db):
-    """測試 store_player_game_data 函式"""
+def test_store_player_game_data_with_details(initialized_db):
+    """【更新版】測試 store_player_game_data 函式，包含詳細打席資訊"""
     conn = initialized_db()
     
     # 1. 先建立一筆比賽記錄
@@ -111,15 +113,28 @@ def test_store_player_game_data(initialized_db):
     game_id = db_actions.store_game_and_get_id(conn, game_info)
     assert game_id is not None
     
-    # 2. 準備假的球員單場數據
+    # 2. 準備包含詳細打席資訊的假資料
     player_data_list = [
         {
-            "summary": {"player_name": "測試員C", "team_name": "測試隊", "at_bats": 4, "hits": 2},
-            "at_bats_list": ["一安", "三振", "二安", "滾地"]
-        },
-        {
-            "summary": {"player_name": "測試員D", "team_name": "測試隊", "at_bats": 1, "hits": 1, "homeruns": 1},
-            "at_bats_list": ["全壘打"]
+            "summary": {"player_name": "測試員C", "team_name": "測試隊"},
+            "at_bats_details": [
+                {
+                    "sequence_in_game": 1,
+                    "result_short": "一安",
+                    "inning": 1,
+                    "outs_before": 0,
+                    "runners_on_base_before": "壘上無人",
+                    "result_description_full": "擊出右外野滾地球，一壘安打。"
+                },
+                {
+                    "sequence_in_game": 2,
+                    "result_short": "三振",
+                    "inning": 3,
+                    "outs_before": 1,
+                    "runners_on_base_before": "一壘有人",
+                    "pitch_sequence_details": "[...]"
+                }
+            ]
         }
     ]
     
@@ -128,18 +143,30 @@ def test_store_player_game_data(initialized_db):
     
     # 4. 驗證結果
     cursor = conn.cursor()
-    # 驗證 player_game_summary 表
-    cursor.execute("SELECT * FROM player_game_summary WHERE game_id = ?", (game_id,))
-    summaries = cursor.fetchall()
-    assert len(summaries) == 2
-    
-    # 驗證 at_bat_details 表
+    # 獲取 player_game_summary 的 id
     cursor.execute("SELECT id FROM player_game_summary WHERE player_name = ?", ('測試員C',))
-    summary_id_c = cursor.fetchone()[0]
+    summary_id = cursor.fetchone()[0]
     
-    cursor.execute("SELECT * FROM at_bat_details WHERE player_game_summary_id = ?", (summary_id_c,))
-    details_c = cursor.fetchall()
-    assert len(details_c) == 4
-    assert details_c[0]['result_short'] == '一安'
+    # 驗證 at_bat_details 表中的數據是否完整
+    cursor.execute("SELECT * FROM at_bat_details WHERE player_game_summary_id = ? ORDER BY sequence_in_game", (summary_id,))
+    details = cursor.fetchall()
+    
+    assert len(details) == 2
+    
+    # 驗證第一個打席的詳細資訊
+    first_at_bat = details[0]
+    assert first_at_bat['sequence_in_game'] == 1
+    assert first_at_bat['inning'] == 1
+    assert first_at_bat['outs_before'] == 0
+    assert first_at_bat['runners_on_base_before'] == "壘上無人"
+    assert "一壘安打" in first_at_bat['result_description_full']
+    
+    # 驗證第二個打席的詳細資訊
+    second_at_bat = details[1]
+    assert second_at_bat['sequence_in_game'] == 2
+    assert second_at_bat['result_short'] == "三振"
+    assert second_at_bat['inning'] == 3
+    assert second_at_bat['outs_before'] == 1
+    assert second_at_bat['pitch_sequence_details'] == "[...]"
     
     conn.close()

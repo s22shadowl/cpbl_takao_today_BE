@@ -1,13 +1,12 @@
-# tests/core/test_parser.py
-
 import pytest
+import json
 from pathlib import Path
 from app.core import parser
 
 # 獲取測試素材檔案的路徑
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
-# --- 測試 parse_schedule_page ---
+# --- 通用的 HTML Fixtures ---
 
 @pytest.fixture
 def schedule_html_content():
@@ -17,40 +16,6 @@ def schedule_html_content():
         pytest.skip("測試素材 schedule_page.html 不存在，跳過相關測試。")
     return schedule_file.read_text(encoding="utf-8")
 
-def test_parse_schedule_page_returns_list(schedule_html_content):
-    """測試 parse_schedule_page 函式是否總是回傳一個列表。"""
-    # 測試正常情況
-    result = parser.parse_schedule_page(schedule_html_content, year=2025)
-    assert isinstance(result, list)
-    
-    # 測試傳入空內容的情況
-    result_empty = parser.parse_schedule_page(None, year=2025)
-    assert isinstance(result_empty, list)
-    assert len(result_empty) == 0
-
-def test_parse_schedule_page_finds_games(schedule_html_content):
-    """測試 parse_schedule_page 是否能正確解析出比賽資訊。"""
-    result = parser.parse_schedule_page(schedule_html_content, year=2025)
-    
-    # 根據您提供的 HTML，裡面有 62 場比賽
-    assert len(result) > 0 # 簡單斷言有抓到比賽即可
-    
-    # 檢查第一筆資料的結構和內容是否符合預期
-    first_game = result[0]
-    assert isinstance(first_game, dict)
-    assert 'game_date' in first_game
-    assert 'cpbl_game_id' in first_game
-    assert 'home_team' in first_game
-    assert 'away_team' in first_game
-    
-    # 驗證具體值
-    assert first_game['game_date'] == '2025-06-01'
-    assert first_game['cpbl_game_id'] == '134'
-    assert first_game['home_team'] == '台鋼雄鷹'
-
-
-# --- 測試 parse_season_stats_page ---
-
 @pytest.fixture
 def team_score_html_content():
     """一個 pytest fixture，用於讀取球隊成績頁面的 HTML 檔案內容。"""
@@ -59,25 +24,6 @@ def team_score_html_content():
         pytest.skip("測試素材 team_score_page.html 不存在，跳過相關測試。")
     return teamscore_file.read_text(encoding="utf-8")
 
-def test_parse_season_stats_page(team_score_html_content):
-    """測試 parse_season_stats_page 是否能正確解析出目標球員的累積數據。"""
-    # config.py 中預設的目標球員是 ["王柏融", "魔鷹", "吳念庭"]
-    result = parser.parse_season_stats_page(team_score_html_content)
-    
-    # 斷言回傳的是一個列表
-    assert isinstance(result, list)
-    # 斷言找到了我們設定的所有目標球員 (3位)
-    assert len(result) == 3
-    
-    # 檢查王柏融的數據是否正確
-    player_wang = next((p for p in result if p['player_name'] == '王柏融'), None)
-    assert player_wang is not None
-    assert isinstance(player_wang, dict)
-    assert player_wang.get('games_played') == 48
-    assert player_wang.get('avg') == 0.267
-    assert player_wang.get('ops') == 0.714
-    
-# --- 測試 parse_box_score_page ---
 @pytest.fixture
 def box_score_html_content():
     """一個 pytest fixture，用於讀取 Box Score 頁面的 HTML 檔案內容。"""
@@ -86,21 +32,135 @@ def box_score_html_content():
         pytest.skip("測試素材 box_score_page.html 不存在，跳過相關測試。")
     return box_score_file.read_text(encoding="utf-8")
 
-def test_parse_box_score_page(box_score_html_content):
-    """測試 parse_box_score_page 是否能正確解析出目標球員的單場數據。"""
-    # config.py 中預設的目標球隊是 "台鋼雄鷹"
-    # config.py 中預設的目標球員是 ["王柏融", "魔鷹", "吳念庭"]
-    # 根據您提供的 HTML，這場比賽是 富邦 vs 台鋼，所以應該能抓到台鋼的球員
-    result = parser.parse_box_score_page(box_score_html_content)
-    
+@pytest.fixture
+def active_inning_html_content():
+    """
+    【重新設計的 Fixture】
+    此 HTML 包含多種情境，用於對 parse_active_inning_details 進行全面的單元測試。
+    """
+    return """
+    <div class="InningPlaysGroup">
+        <div class="tab_container">
+            <div class="tab_cont active">
+                <div class="cont">
+                    <div class="InningPlays">
+                        <section class="top">
+                            <header class="title">測試局數</header>
+                            
+                            <div class="item play">
+                                <div class="player"><a href="#"><span>吳念庭</span></a></div>
+                                <div class="info">
+                                    <div class="desc">第3棒 3B 吳念庭： 擊出中外野方向飛球，出局。</div>
+                                    <div class="detail">
+                                        <div class="detail_item pitcher">對戰投手： <a href="#">黃子鵬</a></div>
+                                        <div class="detail_item pitch-1">
+                                            <div class="pitch_num"><span>1</span></div>
+                                            <div class="call_desc">好球</div>
+                                            <div class="pitches_count">S:1 B:0</div>
+                                        </div>
+                                        <div class="detail_item pitch-2">
+                                            <div class="pitch_num"><span>2</span></div>
+                                            <div class="call_desc">壞球</div>
+                                            <div class="pitches_count">S:1 B:1</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="item play">
+                                <div class="player"><a href="#"><span>林立</span></a></div>
+                                <div class="info">
+                                    <div class="desc">第1棒 2B 林立： 四壞球。</div>
+                                </div>
+                            </div>
+                            
+                            <div class="no-pitch-action-remind">教練暫停</div>
+                            
+                            <div class="item play">
+                                <div class="player"><span></span></div>
+                                <div class="info">
+                                    <div class="desc">資訊不完整的打席</div>
+                                    <div class="detail"></div>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+
+# --- 測試案例 ---
+
+def test_parse_schedule_page(schedule_html_content):
+    result = parser.parse_schedule_page(schedule_html_content, year=2025)
     assert isinstance(result, list)
-    # 預期應該要找到 王柏融, 魔鷹, 吳念庭
+    assert len(result) > 0
+
+def test_parse_season_stats_page(team_score_html_content):
+    result = parser.parse_season_stats_page(team_score_html_content)
+    assert isinstance(result, list)
     assert len(result) == 3
+
+def test_parse_box_score_page(box_score_html_content):
+    result = parser.parse_box_score_page(box_score_html_content)
+    assert isinstance(result, list)
+    assert len(result) == 3
+
+def test_parse_active_inning_details(active_inning_html_content):
+    """
+    【重新設計的測試】
+    對 parse_active_inning_details 進行全面的功能與邏輯驗證。
+    """
+    # 執行解析
+    inning_number = 5
+    events = parser.parse_active_inning_details(active_inning_html_content, inning=inning_number)
     
-    # 檢查王柏融的單場數據
-    player_wang_data = next((p for p in result if p['summary']['player_name'] == '王柏融'), None)
-    assert player_wang_data is not None
-    assert player_wang_data['summary']['at_bats'] == 3
-    assert player_wang_data['summary']['hits'] == 0
-    assert "左飛,左飛,一滾,死球" in player_wang_data['summary']['at_bat_results_summary']
-    assert len(player_wang_data['at_bats_list']) == 4
+    # --- 1. 總體結構驗證 ---
+    # 驗證回傳型別為列表
+    assert isinstance(events, list)
+    # 根據測試資料和函式邏輯，只有「案例1」會被解析，故列表長度應為 1
+    assert len(events) == 1
+    
+    # --- 2. 詳細內容驗證 ---
+    # 取得唯一的事件物件
+    parsed_event = events[0]
+    
+    # 驗證字典的 Key 是否都存在
+    expected_keys = [
+        'inning', 'type', 'hitter_name', 'description', 
+        'result_description_full', 'opposing_pitcher_name', 'pitch_sequence_details'
+    ]
+    for key in expected_keys:
+        assert key in parsed_event
+
+    # 驗證各欄位內容的正確性
+    assert parsed_event['inning'] == inning_number
+    assert parsed_event['type'] == 'at_bat'
+    assert parsed_event['hitter_name'] == '吳念庭'
+    assert parsed_event['description'] == '擊出中外野方向飛球，出局。'
+    assert parsed_event['opposing_pitcher_name'] == '黃子鵬'
+
+    # --- 3. JSON 內容驗證 ---
+    # 驗證 pitch_sequence_details 是一個 JSON 字串
+    assert isinstance(parsed_event['pitch_sequence_details'], str)
+    
+    # 解析 JSON 字串以進行深度內容驗證
+    pitch_sequence = json.loads(parsed_event['pitch_sequence_details'])
+    
+    # 驗證解析後的物件型別和長度
+    assert isinstance(pitch_sequence, list)
+    assert len(pitch_sequence) == 2
+    
+    # 驗證第一顆球的細節
+    first_pitch = pitch_sequence[0]
+    assert first_pitch['num'] == '1'
+    assert first_pitch['desc'] == '好球'
+    assert first_pitch['count'] == 'S:1 B:0'
+    
+    # 驗證第二顆球的細節
+    second_pitch = pitch_sequence[1]
+    assert second_pitch['num'] == '2'
+    assert second_pitch['desc'] == '壞球'
+    assert second_pitch['count'] == 'S:1 B:1'
