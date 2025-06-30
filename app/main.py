@@ -7,7 +7,7 @@ from typing import List
 
 from app import models, db_actions, scraper
 from app.db import get_db_connection
-from app.core import schedule_parser
+from app.core import schedule_scraper
 from app.scheduler import setup_scheduler # 【修改】導入排程器設定函式
 
 # 使用 lifespan 事件來在應用程式啟動時執行排程設定
@@ -63,7 +63,7 @@ def update_schedule_manually(background_tasks: BackgroundTasks):
     【全新】手動觸發賽程更新與排程重設的 API 端點。
     """
     # 為了不阻塞 API 回應，我們將爬取任務放在背景執行
-    background_tasks.add_task(schedule_parser.scrape_cpbl_schedule, 2025, 3, 10)
+    background_tasks.add_task(schedule_scraper.scrape_cpbl_schedule, 2025, 3, 10)
     # 在爬取完成後，重新設定排程
     background_tasks.add_task(setup_scheduler)
 
