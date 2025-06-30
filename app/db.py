@@ -20,9 +20,19 @@ def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    # 1. 比賽結果表 (game_results)
+    # 0. 整季賽程 (game_schedules)
     cursor.execute('''
-    CREATE TABLE IF NOT EXISTS game_results (
+    CREATE TABLE IF NOT EXISTS game_schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    game_id TEXT UNIQUE,
+    game_date DATE,
+    game_time TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
+    # 1. 比賽結果表 (game_results)
+    cursor.execute('''CREATE TABLE IF NOT EXISTS game_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cpbl_game_id TEXT UNIQUE,         -- CPBL 官網的比賽唯一ID
         game_date TEXT NOT NULL,          -- YYYY-MM-DD
