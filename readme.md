@@ -1,105 +1,160 @@
-# CPBL 特定球員數據追蹤後端專案
+CPBL 特定球員數據追蹤後端專案
+本專案是一個 Python 後端應用程式，旨在自動從中華職棒大聯盟 (CPBL) 官網爬取特定球隊與球員的比賽數據。它能獲取球季累積數據、每日比賽結果，以及精細至逐打席的完整紀錄。所有數據均儲存於 SQLite 資料庫，並透過 FastAPI 提供 RESTful API 供前端或其他服務調用。專案內建使用 APScheduler 實現全自動排程，能夠根據賽程在比賽日自動觸發爬蟲。
 
-本專案是一個 Python 後端應用程式，用於從中華職棒大聯盟 (CPBL) 官網爬取特定球隊的特定球員每日比賽數據、逐打席記錄等，並將數據儲存於 SQLite 資料庫，同時透過 FastAPI 提供 API 供前端或其他服務調用。專案內建使用 APScheduler 定時更新數據。
+主要功能
+全自動排程：應用程式啟動時，會自動讀取資料庫中的賽程，為未來的比賽設定排程任務，在比賽結束後約 3.5 小時自動抓取當日數據。
 
-## 主要功能
+精細化數據抓取：不僅抓取比賽總覽和球員單場總結，更能透過瀏覽器自動化，深入文字轉播頁面，抓取目標球員的逐打席詳細記錄，包含對戰投手、好壞球序列、以及打擊前的出局數與壘包狀態。
 
-- **定時爬取**：每日自動從 CPBL 官網抓取最新數據。
-- **目標鎖定**：專注於使用者設定的特定球隊及球員，提高效率。
-- **數據儲存**：使用 SQLite 儲存結構化的比賽結果、球員單場總結及逐打席詳細記錄。
-- **API 服務**：透過 FastAPI 提供 RESTful API 接口，方便查詢所需數據。
-- **詳細記錄**：能夠記錄球員的逐打席描述、對戰投手及好壞球過程。
+目標鎖定與設定檔驅動：所有目標（球隊、球員）與爬蟲參數皆由中央設定檔 app/config.py 控制，方便使用者客製化，無需修改主程式碼。
 
-## 技術棧
+持久化儲存：使用 SQLite 資料庫，並設計了包含賽程、比賽結果、球員單場總結、逐打席記錄、球員球季統計等多個正規化表格，結構清晰。
 
-- **語言**: Python 3.8+
-- **HTTP 請求**: Requests
-- **HTML/XML 解析**: Beautiful Soup 4 (bs4), lxml
-- **瀏覽器自動化 (處理動態內容)**: Playwright
-- **Web API 框架**: FastAPI
-- **資料庫**: SQLite
-- **排程任務**: APScheduler
-- **伺服器**: Uvicorn
+RESTful API 服務：透過 FastAPI 提供 API 接口，不僅能查詢比賽數據，還能手動觸發賽程更新、單日/多日數據爬取等背景任務。
 
-## 環境需求
+技術棧
+語言: Python 3.8+
 
-- Python 3.8 或更高版本
-- pip (Python 套件安裝器)
-- Git (版本控制)
+Web API 框架: FastAPI
 
-## 安裝與設定步驟
+非同步網頁伺服器: Uvicorn
 
-1.  **克隆 (Clone) 專案庫：**
+瀏覽器自動化 (處理動態內容): Playwright
 
-    ```bash
-    git clone <您的專案庫URL>
-    cd <專案資料夾名稱>
-    ```
+HTML/XML 解析: Beautiful Soup 4 (bs4)
 
-2.  **建立並啟動 Python 虛擬環境：**
+排程任務: APScheduler
 
-    ```bash
-    python -m venv venv
-    ```
+資料庫: SQLite (使用內建 sqlite3 模組)
 
-    - Windows (cmd.exe):
-      ```bash
-      venv\Scripts\activate
-      ```
-    - Windows (PowerShell):
-      ```bash
-      venv\Scripts\Activate.ps1
-      ```
-    - macOS / Linux:
-      `bash
-    source venv/bin/activate
-    `
-      啟動後，命令提示字元前應出現 `(venv)`。
+數據模型: Pydantic
 
-3.  **安裝依賴套件：**
+安裝與設定流程
+請遵循以下步驟來完整設定並啟動專案。
 
-    ```bash
-    pip install -r requirements.txt
-    ```
+1. 克隆 (Clone) 專案庫
+   git clone <您的專案庫 URL>
+   cd <專案資料夾名稱>
 
-    _(請確保您已在專案根目錄執行 `pip freeze > requirements.txt` 來產生此檔案)_
+2. 建立並啟動 Python 虛擬環境
 
-4.  **安裝 Playwright 瀏覽器驅動：**
+# 建立虛擬環境
 
-    ```bash
-    playwright install
-    ```
+python -m venv venv
 
-    (這會安裝 Chromium, Firefox, WebKit 的驅動。如果只需要特定瀏覽器，例如 `playwright install chromium`)
+Windows (PowerShell):
 
-5.  **設定目標球隊與球員：**
-    打開 `app/scraper.py` 檔案，修改檔案頂部的 `TARGET_TEAM_NAME` 和 `TARGET_PLAYER_NAMES` 常數：
+.\venv\Scripts\Activate.ps1
 
-    ```python
-    # app/scraper.py
-    # --- 設定目標球隊與球員 ---
-    TARGET_TEAM_NAME = "您想追蹤的球隊名稱"  # 例如："中信兄弟"
-    TARGET_PLAYER_NAMES = ["球員A", "球員B", "球員C"] # 您想追蹤的球員姓名列表
-    ```
+macOS / Linux:
 
-6.  **初始化資料庫：**
-    執行以下命令來建立 SQLite 資料庫檔案 (`app/data/cpbl_stats.db`) 及所需的表格結構：
+source venv/bin/activate
 
-    ```bash
-    python app/db.py
-    ```
+啟動後，您的命令提示字元前應出現 (venv)。
 
-    這會在 `app/data/` 目錄下產生資料庫檔案。
+3. 安裝依賴套件
+   專案所需的所有 Python 套件都記錄在 requirements.txt 中。
 
-7.  **重要 - 配置爬蟲解析邏輯：**
-    打開 `app/scraper.py` 檔案。找到以下函式（或類似的函式）：
-    - `get_all_games_for_date()`: **您必須實現此函式**，使其能夠正確抓取指定日期的所有比賽基本資訊，特別是每場比賽的 Box Score 頁面 URL。
-    - `parse_and_store_target_players_stats_from_box()`: **這是最關鍵的部分**。您需要根據 CPBL 官網 Box Score 頁面的**實際 HTML 結構**，修改此函式內部使用 `BeautifulSoup` 進行數據提取的選擇器 (例如 `soup.find_all(...)` 中的 class 名稱、id 等)。所有標有 `# --- 佔位符 ---` 或 `# --- 根據實際 HTML 修改 ---` 的註解處都需要您仔細檢查並編寫。
+pip install -r requirements.txt
 
-## 啟動應用程式
+4. 安裝 Playwright 瀏覽器驅動
+   Playwright 需要對應的瀏覽器驅動程式來執行自動化操作。
 
-在專案根目錄（`app` 資料夾的上一層）執行以下命令以啟動 FastAPI 開發伺服器：
+playwright install
 
-```bash
+(此指令會安裝 Chromium, Firefox, and WebKit。若您僅需特定瀏覽器，可執行 playwright install chromium)
+
+5. 設定追蹤目標
+   這是最重要的客製化步驟。請打開設定檔 app/config.py，並修改以下變數：
+
+# app/config.py
+
+# --- 目標設定 ---
+
+TARGET_TEAM_NAME = "台鋼雄鷹"
+TARGET_PLAYER_NAMES = ["王柏融", "魔鷹", "吳念庭"]
+
+TARGET_TEAM_NAME：您想追蹤的球隊完整名稱。
+
+TARGET_PLAYER_NAMES：一個包含多位球員姓名的 Python 列表。
+
+啟動與使用指南
+專案的運作分為三個主要階段：初始化 -> 啟動服務 -> 更新賽程。
+
+步驟一：初始化資料庫
+首次執行專案前，需要建立資料庫檔案及所有表格結構。
+
+python app/db.py
+
+此指令會讀取 app/db.py 中的 CREATE TABLE 敘述，並在 app/data/ 目錄下產生 cpbl_stats.db 檔案。
+
+步驟二：啟動 FastAPI 應用程式
+在專案根目錄下執行以下指令，啟動後端服務：
+
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
+
+--reload 參數會讓伺服器在程式碼變更時自動重啟，方便開發。
+
+步驟三：首次更新賽程 (必要操作)
+為了讓排程器知道何時該執行任務，您必須先將本球季的賽程資訊存入資料庫。
+
+應用程式啟動後，請使用 curl 或任何 API 測試工具 (如 Postman)，向以下端點發送一個 POST 請求：
+
+curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule)
+
+此請求會觸發一個背景任務，執行 app/core/schedule_scraper.py，爬取官網從 3 月到 10 月的完整賽程，並存入資料庫。
+
+完成後，它會自動重設排程器，讀取新存入的賽程並設定好所有未來的爬蟲任務。
+
+注意：此操作每年球季初執行一次即可，或在賽程有重大變動時再次執行。
+
+API 端點說明
+應用程式提供以下 API 端點供您互動：
+
+1. 取得指定日期的比賽結果
+   Endpoint: GET /api/games/{game_date}
+
+說明: 查詢並回傳指定日期的所有比賽基本資料。
+
+範例:
+
+curl [http://127.0.0.1:8000/api/games/2025-06-30](http://127.0.0.1:8000/api/games/2025-06-30)
+
+2. 手動觸發賽程更新
+   Endpoint: POST /api/update_schedule
+
+說明: 如上所述，此為初始化或更新整個球季賽程的核心工具。觸發後會自動重設排程器。
+
+範例:
+
+curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule)
+
+3. 手動觸發數據爬蟲
+   Endpoint: POST /api/run_scraper
+
+說明: 用於手動補跑或測試特定時間範圍的數據爬取，可取代自動排程。
+
+參數:
+
+mode (必要): daily, monthly, yearly
+
+date (可選):
+
+當 mode=daily 時，格式為 "YYYY-MM-DD"。
+
+當 mode=monthly 時，格式為 "YYYY-MM"。
+
+當 mode=yearly 時，格式為 "YYYY"。
+
+範例:
+
+補跑昨天的數據:
+
+curl -X POST "[http://127.0.0.1:8000/api/run_scraper?mode=daily&date=2025-06-29](http://127.0.0.1:8000/api/run_scraper?mode=daily&date=2025-06-29)"
+
+補跑整個五月的數據:
+
+curl -X POST "[http://127.0.0.1:8000/api/run_scraper?mode=monthly&date=2025-05](http://127.0.0.1:8000/api/run_scraper?mode=monthly&date=2025-05)"
+
+日誌 (Logging)
+專案運行過程中的所有重要資訊、進度及錯誤都會被記錄下來。日誌檔案位於專案根目錄下的 logs/scraper.log。
