@@ -1,185 +1,196 @@
 # app/db_actions.py
 
 import logging
-import sqlite3
 import datetime
+from typing import List, Dict, Any
 
-def store_game_and_get_id(conn, game_info):
+# SQLAlchemy 的 Session，用於型別提示
+from sqlalchemy.orm import Session
+# 匯入我們定義的 SQLAlchemy 模型
+from . import models
+
+def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
     """
-    將單場比賽概要資訊存入 game_results 表格。
+    【ORM版】將單場比賽概要資訊存入 game_results 表格。
     如果比賽記錄已存在，則不進行任何操作。
     無論如何，都會查詢並返回該筆記錄在資料庫中的主鍵 id。
 
-    :param conn: 資料庫連線物件
+    :param db: SQLAlchemy Session 物件
     :param game_info: 包含單場比賽資訊的字典
     :return: 該筆比賽記錄在資料庫中的 id (int)，如果失敗則返回 None
     """
-    cursor = conn.cursor()
     try:
-        fields = [
-            'cpbl_game_id', 'game_date', 'game_time', 'home_team', 'away_team',
-            'home_score', 'away_score', 'venue', 'status'
-        ]
-        values = tuple(game_info.get(f) for f in fields)
+        cpbl_game_id = game_info.get('cpbl_game_id')
+        if not cpbl_game_id:
+            return None
 
-        cursor.execute(f"INSERT OR IGNORE INTO game_results ({', '.join(fields)}) VALUES ({', '.join(['?'] * len(fields))})", values)
-        
-        if game_info.get('cpbl_game_id'):
-            cursor.execute("SELECT id FROM game_results WHERE cpbl_game_id = ?", (game_info['cpbl_game_id'],))
-            row = cursor.fetchone()
-            if row:
-                conn.commit()
-                return row[0]
-        
-        # 如果沒有 cpbl_game_id 或查詢失敗，回滾並返回 None
-        conn.rollback()
+        # 1. 查詢比賽是否已存在
+        existing_game = db.query(models.GameResultDB).filter(models.GameResultDB.cpbl_game_id == cpbl_game_id).first()
+
+        if existing_game:
+            return existing_game.id
+        else:
+            # 2. 如果不存在，則新增
+            game_data_for_db = {
+                'cpbl_game_id': game_info.get('cpbl_game_id'),
+                'game_date': datetime.datetime.strptime(game_info['game_date'], "%Y-%m-%d").date(),
+                'game_time': game_info.get('game_time'),
+                'home_team': game_info.get('home_team'),
+                'away_team': game_info.get('away_team'),
+                'home_score': game_info.get('home_score'),
+                'away_score': game_info.get('away_score'),
+                'venue': game_info.get('venue'),
+                'status': game_info.get('status'),
+            }
+            new_game = models.GameResultDB(**game_data_for_db)
+            db.add(new_game)
+            db.commit()
+            db.refresh(new_game) # 刷新以獲取新產生的 id
+            logging.info(f"新增比賽結果到資料庫: {new_game.cpbl_game_id}")
+            return new_game.id
+
+    except Exception as e:
+        logging.error(f"儲存比賽結果時出錯: {e}", exc_info=True)
+        db.rollback()
         return None
 
-    except sqlite3.Error as e:
-        logging.error(f"儲存比賽結果時出錯: {e}")
-        conn.rollback()
-    return None
-
-def update_player_season_stats(conn, season_stats_list):
+def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, Any]]):
     """
-    使用 executemany 批次更新多位球員的球季累積數據。
-    採用「先刪除後插入」的策略，確保數據永遠是最新。
+    【ORM版】批次更新多位球員的球季累積數據。
+    採用「先刪除後插入」的策略。
     """
     if not season_stats_list:
         return
 
     logging.info(f"準備批次更新 {len(season_stats_list)} 位球員的球季累積數據...")
-    cursor = conn.cursor()
     
-    db_fields_ordered = [
-        'player_name', 'team_name', 'data_retrieved_date', 'games_played', 'plate_appearances', 
-        'at_bats', 'runs_scored', 'hits', 'rbi', 'homeruns', 'singles', 'doubles', 'triples',
-        'total_bases', 'strikeouts', 'stolen_bases', 'gidp', 'sacrifice_hits', 
-        'sacrifice_flies', 'walks', 'intentional_walks', 'hit_by_pitch', 'caught_stealing',
-        'ground_outs', 'fly_outs', 'avg', 'obp', 'slg', 'ops', 'go_ao_ratio', 
-        'sb_percentage', 'silver_slugger_index'
-    ]
-    
-    data_to_insert = []
-    for stats in season_stats_list:
-        stats['data_retrieved_date'] = datetime.date.today().strftime("%Y-%m-%d")
-        # 準備元組，若字典中缺少某個 key，則提供安全的預設值
-        values = tuple(stats.get(field, 0.0 if any(k in field for k in ['avg', 'obp', 'slg', 'ops', 'ratio', 'percentage', 'index']) else 0) for field in db_fields_ordered)
-        data_to_insert.append(values)
-    
-    try:
-        # 使用 executemany 一次性刪除所有舊記錄
-        player_names_to_delete = [(stats['player_name'],) for stats in season_stats_list]
-        cursor.executemany("DELETE FROM player_season_stats WHERE player_name = ?", player_names_to_delete)
-        
-        # 使用 executemany 一次性插入所有新記錄，效能更佳
-        cursor.executemany(
-            f"INSERT INTO player_season_stats ({', '.join(db_fields_ordered)}) VALUES ({', '.join(['?'] * len(db_fields_ordered))})",
-            data_to_insert
-        )
-        conn.commit()
-        logging.info(f"成功批次更新 {len(data_to_insert)} 筆球員球季數據。")
-    except sqlite3.Error as e:
-        logging.error(f"批次更新球員球季數據時出錯: {e}")
-        conn.rollback()
+    player_names_to_update = [stats['player_name'] for stats in season_stats_list]
 
-def store_player_game_data(conn, game_id, all_players_data):
-    """【最終修正版】儲存多位球員的單場總結與完整的逐打席記錄。"""
+    try:
+        # 1. 一次性刪除所有即將更新的球員的舊記錄
+        db.query(models.PlayerSeasonStatsDB).filter(
+            models.PlayerSeasonStatsDB.player_name.in_(player_names_to_update)
+        ).delete(synchronize_session=False)
+        
+        # 2. 準備新的 ORM 物件列表
+        new_stats_objects = []
+        for stats in season_stats_list:
+            stats['data_retrieved_date'] = datetime.date.today().strftime("%Y-%m-%d")
+            new_stats_objects.append(models.PlayerSeasonStatsDB(**stats))
+            
+        # 3. 一次性批次插入所有新記錄
+        db.add_all(new_stats_objects)
+        db.commit()
+        logging.info(f"成功批次更新 {len(new_stats_objects)} 筆球員球季數據。")
+    except Exception as e:
+        logging.error(f"批次更新球員球季數據時出錯: {e}", exc_info=True)
+        db.rollback()
+
+def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dict[str, Any]]):
+    """【ORM版】儲存多位球員的單場總結與完整的逐打席記錄。"""
     if not all_players_data: return
-    cursor = conn.cursor()
+
     for player_data in all_players_data:
-        summary = player_data.get("summary", {})
-        at_bats_details = player_data.get("at_bats_details", [])
-        if not summary or not at_bats_details: continue
-        summary['game_id'] = game_id
+        summary_dict = player_data.get("summary", {})
+        at_bats_details_list = player_data.get("at_bats_details", [])
+        if not summary_dict: continue
+        
+        player_name = summary_dict.get("player_name")
 
         try:
-            summary_fields = list(summary.keys())
-            summary_values = tuple(summary.values())
-            cursor.execute(f"INSERT OR REPLACE INTO player_game_summary ({', '.join(summary_fields)}) VALUES ({', '.join(['?'] * len(summary_fields))})", summary_values)
+            # 1. 處理/更新球員單場總結 (Upsert)
+            summary_dict['game_id'] = game_id
             
-            player_game_summary_id = cursor.lastrowid
+            # 查詢現有記錄
+            existing_summary = db.query(models.PlayerGameSummaryDB).filter_by(
+                game_id=game_id, 
+                player_name=player_name
+            ).first()
+
+            if existing_summary:
+                # 更新現有記錄
+                for key, value in summary_dict.items():
+                    setattr(existing_summary, key, value)
+                summary_orm_object = existing_summary
+            else:
+                # 新增記錄
+                summary_orm_object = models.PlayerGameSummaryDB(**summary_dict)
+                db.add(summary_orm_object)
+            
+            # 使用 merge 也是一種選擇，但手動控制更清晰
+            # summary_orm_object = db.merge(models.PlayerGameSummaryDB(**summary_dict))
+
+            db.flush() # 送出變更到資料庫，以便取得 summary_orm_object.id
+            
+            player_game_summary_id = summary_orm_object.id
             if not player_game_summary_id:
-                cursor.execute("SELECT id FROM player_game_summary WHERE game_id = ? AND player_name = ?", (game_id, summary['player_name']))
-                fetched = cursor.fetchone()
-                if fetched: player_game_summary_id = fetched[0]
+                logging.warning(f"無法取得球員 {player_name} 在比賽 {game_id} 的 summary_id。")
+                continue
 
-            if player_game_summary_id:
-                initial_details = [
-                    (player_game_summary_id, d.get('sequence_in_game'), d.get('result_short'), d.get('inning'))
-                    for d in at_bats_details
-                ]
-                cursor.executemany("INSERT OR IGNORE INTO at_bat_details (player_game_summary_id, sequence_in_game, result_short, inning) VALUES (?, ?, ?, ?)", initial_details)
+            # 2. 處理/更新逐打席記錄 (Upsert)
+            for detail_dict in at_bats_details_list:
+                detail_dict['player_game_summary_id'] = player_game_summary_id
                 
-                details_to_update = [
-                    (
-                        d.get('outs_before'),
-                        d.get('runners_on_base_before'),
-                        d.get('result_description_full'),
-                        d.get('opposing_pitcher_name'),
-                        d.get('pitch_sequence_details'),
-                        player_game_summary_id,
-                        d.get('sequence_in_game')
-                    ) for d in at_bats_details
-                ]
-                cursor.executemany("""
-                    UPDATE at_bat_details SET
-                        outs_before = ?,
-                        runners_on_base_before = ?,
-                        result_description_full = ?,
-                        opposing_pitcher_name = ?,
-                        pitch_sequence_details = ?
-                    WHERE player_game_summary_id = ? AND sequence_in_game = ?
-                """, details_to_update)
-                logging.info(f"成功更新/儲存球員 [{summary['player_name']}] 的 {len(at_bats_details)} 筆逐打席詳細記錄。")
-        except sqlite3.Error as e:
-            logging.error(f"儲存球員 [{summary.get('player_name')}] 的單場比賽數據時出錯: {e}", exc_info=True)
-            conn.rollback()
-    conn.commit()
+                existing_detail = db.query(models.AtBatDetailDB).filter_by(
+                    player_game_summary_id=player_game_summary_id,
+                    sequence_in_game=detail_dict.get('sequence_in_game')
+                ).first()
 
-def update_game_schedules(conn, games_list: list):
-    """【全新】更新比賽排程表。採用「先清空後批次插入」的策略，確保排程永遠是最新的。"""
+                if existing_detail:
+                    for key, value in detail_dict.items():
+                        setattr(existing_detail, key, value)
+                else:
+                    db.add(models.AtBatDetailDB(**detail_dict))
+
+            logging.info(f"成功更新/儲存球員 [{player_name}] 的 {len(at_bats_details_list)} 筆逐打席記錄。")
+
+        except Exception as e:
+            logging.error(f"儲存球員 [{player_name}] 的單場比賽數據時出錯: {e}", exc_info=True)
+            db.rollback() # 單一球員出錯時回滾該球員的操作
+            continue # 繼續處理下一位球員
+
+    db.commit() # 所有球員都處理完畢後，統一提交
+
+def update_game_schedules(db: Session, games_list: List[Dict[str, Any]]):
+    """【ORM版】更新比賽排程表。採用「先清空後批次插入」的策略。"""
     if not games_list:
         logging.info("沒有新的比賽排程需要更新。")
         return
         
     logging.info(f"準備更新資料庫中的比賽排程，共 {len(games_list)} 場...")
-    cursor = conn.cursor()
-
-    data_to_insert = [
-        (
-            game.get("game_id"), 
-            game.get("date"), 
-            game.get("game_time"),
-            game.get("matchup")
-        )
-        for game in games_list
-    ]
     
     try:
         # 1. 為了確保資料最新，先刪除所有舊的排程
-        cursor.execute("DELETE FROM game_schedules;")
-        logging.info("已清空舊的比賽排程。")
+        num_deleted = db.query(models.GameSchedule).delete()
+        logging.info(f"已清空舊的比賽排程，共刪除 {num_deleted} 筆。")
         
-        # 【核心修正】: INSERT 語句中也增加 matchup 欄位
-        cursor.executemany(
-            "INSERT INTO game_schedules (game_id, game_date, game_time, matchup) VALUES (?, ?, ?, ?)",
-            data_to_insert
-        )
-        conn.commit()
+        # 2. 準備新的 ORM 物件
+        data_to_insert = []
+        for game in games_list:
+            data_to_insert.append(models.GameSchedule(
+                game_id=game.get("game_id"),
+                game_date=datetime.datetime.strptime(game['date'], "%Y-%m-%d").date(),
+                game_time=game.get("game_time"),
+                matchup=game.get("matchup")
+            ))
+        
+        # 3. 批次插入
+        db.add_all(data_to_insert)
+        db.commit()
         logging.info(f"成功寫入 {len(data_to_insert)} 筆新的比賽排程。")
-    except sqlite3.Error as e:
-        logging.error(f"更新比賽排程時發生錯誤: {e}")
-        conn.rollback()
+    except Exception as e:
+        logging.error(f"更新比賽排程時發生錯誤: {e}", exc_info=True)
+        db.rollback()
 
-def get_all_schedules(conn) -> list:
-    """【全新】從資料庫獲取所有已儲存的比賽排程。"""
+def get_all_schedules(db: Session) -> List[models.GameSchedule]:
+    """【ORM版】從資料庫獲取所有已儲存的比賽排程。"""
     try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM game_schedules ORDER BY game_date, game_time;")
-        schedules = cursor.fetchall()
-        # 將 sqlite3.Row 物件轉換為字典列表
-        return [dict(row) for row in schedules]
-    except sqlite3.Error as e:
-        logging.error(f"獲取比賽排程時發生錯誤: {e}")
+        # 直接使用 ORM 查詢並排序
+        schedules = db.query(models.GameSchedule).order_by(
+            models.GameSchedule.game_date, 
+            models.GameSchedule.game_time
+        ).all()
+        return schedules
+    except Exception as e:
+        logging.error(f"獲取比賽排程時發生錯誤: {e}", exc_info=True)
         return []

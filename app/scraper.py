@@ -9,11 +9,13 @@ import re
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 # 專案內部模組導入
-from app import config
+# 修正：匯入 settings 物件和 TEAM_CLUB_CODES 字典
+from app.config import settings, TEAM_CLUB_CODES
 from app.core import fetcher
 from app.core import parser as html_parser
 from app import db_actions
-from app.db import get_db_connection
+# 修正：匯入新的 SQLAlchemy Session 工廠
+from app.db import SessionLocal
 
 # --- 日誌設定 ---
 LOG_DIR = "logs"
@@ -32,12 +34,14 @@ logging.basicConfig(
 
 def scrape_and_store_season_stats():
     """抓取並儲存目標球員的球季累積數據。"""
-    club_no = config.TEAM_CLUB_CODES.get(config.TARGET_TEAM_NAME)
+    # 修正：使用 settings 物件
+    club_no = TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
     if not club_no:
-        logging.error(f"在設定中找不到球隊 [{config.TARGET_TEAM_NAME}] 的代碼 (ClubNo)。")
+        logging.error(f"在設定中找不到球隊 [{settings.TARGET_TEAM_NAME}] 的代碼 (ClubNo)。")
         return
 
-    team_stats_url = f"{config.TEAM_SCORE_URL}?ClubNo={club_no}"
+    # 修正：使用 settings 物件
+    team_stats_url = f"{settings.TEAM_SCORE_URL}?ClubNo={club_no}"
     logging.info(f"--- 開始抓取球季累積數據，URL: {team_stats_url} ---")
     
     html_content = fetcher.get_dynamic_page_content(team_stats_url, wait_for_selector="div.RecordTable")
@@ -50,12 +54,14 @@ def scrape_and_store_season_stats():
         logging.info("未解析到任何目標球員的球季數據。")
         return
         
-    conn = get_db_connection()
+    # 修正：使用 SQLAlchemy Session
+    db = SessionLocal()
     try:
-        db_actions.update_player_season_stats(conn, season_stats_list)
+        # 假設 db_actions 已更新為接受 session 物件
+        db_actions.update_player_season_stats(db, season_stats_list)
     finally:
-        if conn:
-            conn.close()
+        if db:
+            db.close()
     
     logging.info(f"--- 球季累積數據抓取完畢 ---")
 
@@ -63,7 +69,8 @@ def _process_filtered_games(games_to_process):
     """【最終修正版】處理比賽列表，採用最終正確的「逐局切換、展開、解析」互動邏輯。"""
     if not games_to_process: return
     logging.info(f"準備處理 {len(games_to_process)} 場比賽...")
-    conn = get_db_connection()
+    # 修正：使用 SQLAlchemy Session
+    db = SessionLocal()
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, slow_mo=300)
@@ -71,21 +78,25 @@ def _process_filtered_games(games_to_process):
             for game_info in games_to_process:
                 try:
                     if game_info.get('status') != "已完成": continue
-                    if config.TARGET_TEAM_NAME not in [game_info.get('home_team'), game_info.get('away_team')]: continue
+                    # 修正：使用 settings 物件
+                    if settings.TARGET_TEAM_NAME not in [game_info.get('home_team'), game_info.get('away_team')]: continue
                     
                     logging.info(f"處理目標球隊比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-                    game_id_in_db = db_actions.store_game_and_get_id(conn, game_info)
+                    # 假設 db_actions 已更新為接受 session 物件
+                    game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
                     if not game_id_in_db: continue
                     box_score_url = game_info.get('box_score_url')
                     if not box_score_url: continue
                     
-                    page.goto(box_score_url, timeout=config.PLAYWRIGHT_TIMEOUT)
+                    # 修正：使用 settings 物件
+                    page.goto(box_score_url, timeout=settings.PLAYWRIGHT_TIMEOUT)
                     page.wait_for_selector("div.GameBoxDetail", state='visible', timeout=30000)
                     all_players_data = html_parser.parse_box_score_page(page.content())
                     if not all_players_data: continue
                     
                     live_url = box_score_url.replace('/box?', '/box/live?')
-                    page.goto(live_url, wait_until="load", timeout=config.PLAYWRIGHT_TIMEOUT)
+                    # 修正：使用 settings 物件
+                    page.goto(live_url, wait_until="load", timeout=settings.PLAYWRIGHT_TIMEOUT)
                     page.wait_for_selector("div.InningPlaysGroup", timeout=15000)
                     
                     full_game_events = []
@@ -100,13 +111,15 @@ def _process_filtered_games(games_to_process):
 
                         active_inning_content = page.locator("div.InningPlaysGroup div.tab_cont.active")
 
-                        is_target_home = config.TARGET_TEAM_NAME == game_info.get('home_team')
+                        # 修正：使用 settings 物件
+                        is_target_home = settings.TARGET_TEAM_NAME == game_info.get('home_team')
                         target_half_inning_selector = "section.bot" if is_target_home else "section.top"
 
                         half_inning_section = active_inning_content.locator(target_half_inning_selector)
                         if half_inning_section.count() > 0:
                             expand_buttons = half_inning_section.locator('a[title="展開打擊紀錄"]').all()
-                            logging.info(f"處理第 {inning_num} 局 [{config.TARGET_TEAM_NAME}]，找到 {len(expand_buttons)} 個打席，準備展開...")
+                            # 修正：使用 settings 物件
+                            logging.info(f"處理第 {inning_num} 局 [{settings.TARGET_TEAM_NAME}]，找到 {len(expand_buttons)} 個打席，準備展開...")
                             for button in expand_buttons:
                                 try:
                                     if button.is_visible(timeout=500):
@@ -133,7 +146,8 @@ def _process_filtered_games(games_to_process):
                         runners_str_list = [base for base, runner in zip(['一壘', '二壘', '三壘'], current_runners) if runner]
                         runners_on_base_before = "、".join(runners_str_list) + "有人" if runners_str_list else "壘上無人"
 
-                        if event.get('hitter_name') in config.TARGET_PLAYER_NAMES:
+                        # 修正：使用 settings 物件
+                        if event.get('hitter_name') in settings.TARGET_PLAYER_NAMES:
                             hitter = event['hitter_name']
                             player_pa_counter[hitter] += 1
                             event['sequence_in_game'] = player_pa_counter[hitter]
@@ -158,12 +172,13 @@ def _process_filtered_games(games_to_process):
                             if detail_match: merged_at_bat.update(detail_match)
                             player_data["at_bats_details"].append(merged_at_bat)
                             
-                    db_actions.store_player_game_data(conn, game_id_in_db, all_players_data)
+                    # 假設 db_actions 已更新為接受 session 物件
+                    db_actions.store_player_game_data(db, game_id_in_db, all_players_data)
 
                 except Exception as e:
                     logging.error(f"處理比賽 {game_info.get('cpbl_game_id')} 時發生未知錯誤: {e}", exc_info=True)
     finally:
-            if conn: conn.close()
+        if db: db.close()
 
 
 # --- 主功能函式 ---
@@ -239,6 +254,7 @@ def scrape_entire_year(year_str=None):
             if all_month_games:
                 games_to_process = [game for game in all_month_games if datetime.datetime.strptime(game['game_date'], "%Y-%m-%d").date() <= today]
                 _process_filtered_games(games_to_process)
+        # 修正：使用 settings 物件
         logging.info(f"處理完 {year_to_scrape}-{month:02d}，稍作等待...")
-        time.sleep(config.FRIENDLY_SCRAPING_DELAY)
+        time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
     logging.info(f"--- [逐年模式] 執行完畢 ---")
