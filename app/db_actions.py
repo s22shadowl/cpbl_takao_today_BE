@@ -138,35 +138,39 @@ def store_player_game_data(conn, game_id, all_players_data):
     conn.commit()
 
 def update_game_schedules(conn, games_list: list):
-        """【全新】更新比賽排程表。採用「先清空後批次插入」的策略，確保排程永遠是最新的。"""
-        if not games_list:
-            logging.info("沒有新的比賽排程需要更新。")
-            return
-            
-        logging.info(f"準備更新資料庫中的比賽排程，共 {len(games_list)} 場...")
-        cursor = conn.cursor()
+    """【全新】更新比賽排程表。採用「先清空後批次插入」的策略，確保排程永遠是最新的。"""
+    if not games_list:
+        logging.info("沒有新的比賽排程需要更新。")
+        return
         
-        # 準備要插入的資料
-        data_to_insert = [
-            (game.get("game_id"), game.get("date"), game.get("time"))
-            for game in games_list
-        ]
+    logging.info(f"準備更新資料庫中的比賽排程，共 {len(games_list)} 場...")
+    cursor = conn.cursor()
+
+    data_to_insert = [
+        (
+            game.get("game_id"), 
+            game.get("date"), 
+            game.get("game_time"),
+            game.get("matchup")
+        )
+        for game in games_list
+    ]
+    
+    try:
+        # 1. 為了確保資料最新，先刪除所有舊的排程
+        cursor.execute("DELETE FROM game_schedules;")
+        logging.info("已清空舊的比賽排程。")
         
-        try:
-            # 1. 為了確保資料最新，先刪除所有舊的排程
-            cursor.execute("DELETE FROM game_schedules;")
-            logging.info("已清空舊的比賽排程。")
-            
-            # 2. 使用 executemany 一次性插入所有新排程
-            cursor.executemany(
-                "INSERT INTO game_schedules (game_id, game_date, game_time) VALUES (?, ?, ?)",
-                data_to_insert
-            )
-            conn.commit()
-            logging.info(f"成功寫入 {len(data_to_insert)} 筆新的比賽排程。")
-        except sqlite3.Error as e:
-            logging.error(f"更新比賽排程時發生錯誤: {e}")
-            conn.rollback()
+        # 【核心修正】: INSERT 語句中也增加 matchup 欄位
+        cursor.executemany(
+            "INSERT INTO game_schedules (game_id, game_date, game_time, matchup) VALUES (?, ?, ?, ?)",
+            data_to_insert
+        )
+        conn.commit()
+        logging.info(f"成功寫入 {len(data_to_insert)} 筆新的比賽排程。")
+    except sqlite3.Error as e:
+        logging.error(f"更新比賽排程時發生錯誤: {e}")
+        conn.rollback()
 
 def get_all_schedules(conn) -> list:
     """【全新】從資料庫獲取所有已儲存的比賽排程。"""

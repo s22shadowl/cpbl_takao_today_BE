@@ -2,7 +2,6 @@
 
 import pytest
 import sqlite3
-import datetime
 from pathlib import Path
 
 # 導入我們要測試的資料庫操作函式
@@ -156,8 +155,8 @@ def test_update_and_get_game_schedules(initialized_db):
     
     # 1. 準備第一批假的賽程資料
     initial_schedules = [
-        {"game_id": "176", "date": "2025-06-21", "time": "17:05", "matchup": "台鋼雄鷹 vs 樂天桃猿"},
-        {"game_id": "179", "date": "2025-06-22", "time": "17:05", "matchup": "台鋼雄鷹 vs 樂天桃猿"}
+        {"game_id": "176", "date": "2025-06-21", "game_time": "17:05", "matchup": "台鋼雄鷹 vs 樂天桃猿"},
+        {"game_id": "179", "date": "2025-06-22", "game_time": "17:05", "matchup": "台鋼雄鷹 vs 樂天桃猿"}
     ]
     
     # 2. 第一次更新 (插入)
@@ -171,7 +170,7 @@ def test_update_and_get_game_schedules(initialized_db):
 
     # 4. 準備第二批假的賽程資料 (模擬賽程更新)
     updated_schedules = [
-        {"game_id": "180", "date": "2025-06-22", "time": "18:35", "matchup": "統一7-ELEVEn獅 vs 味全龍"},
+        {"game_id": "180", "date": "2025-06-22", "game_time": "18:35", "matchup": "統一7-ELEVEn獅 vs 味全龍"},
     ]
     
     # 5. 第二次更新 (應先清空再插入)

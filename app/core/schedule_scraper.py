@@ -2,6 +2,7 @@
 
 import logging
 import json
+from datetime import datetime
 from typing import List, Dict, Optional
 
 from playwright.sync_api import sync_playwright
@@ -11,9 +12,10 @@ from app import config
 from app.db import get_db_connection
 from app import db_actions
 
-def scrape_cpbl_schedule(year: int, start_month: int, end_month: int) -> List[Dict[str, Optional[str]]]:
+def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_past_games: bool = False) -> List[Dict[str, Optional[str]]]:
     """
     從中華職棒官網爬取指定年份和月份區間的賽程，並篩選目標球隊，最終存入資料庫。
+    :param include_past_games: 若為 False (預設)，則只會儲存今天及未來的比賽。
     """
     schedule_page_url = "https://www.cpbl.com.tw/schedule"
     all_games: List[Dict[str, Optional[str]]] = []
@@ -42,7 +44,6 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int) -> List[Di
                 page.select_option(".ScheduleSearch .year select", value=str(year))
                 page.select_option(".ScheduleSearch .month select", value=str(month - 1))
                 
-                # 等待 Vue.js 透過 AJAX 更新內容
                 page.wait_for_selector(".blockUI", state="hidden", timeout=15000)
                 logging.info(f"取得 {year} 年 {month} 月的資料成功。")
 
@@ -59,7 +60,7 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int) -> List[Di
 
                 for row in game_rows:
                     date_cell = row.find('td', class_='date')
-                    if date_cell:
+                    if date_cell and date_cell.get_text(strip=True):
                         current_date_text = date_cell.get_text(strip=True).split('(')[0].strip()
                         current_date = f"{year}-{current_date_text.replace('/', '-')}"
 
@@ -80,39 +81,59 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int) -> List[Di
                     if config.TARGET_TEAM_NAME not in [home_team, away_team]:
                         continue
 
-                    start_time = info_cell.find('div', class_='time').find('span').get_text(strip=True) if info_cell.find('div', class_='time') else ""
+                    start_time = ""
+                    time_div = info_cell.find('div', class_='time')
+                    if time_div:
+                        time_span = time_div.find('span')
+                        if time_span:
+                            start_time = time_span.get_text(strip=True)
                     
                     game_info = {
                         "date": current_date,
                         "game_id": game_id,
                         "matchup": f"{away_team} vs {home_team}",
-                        "time": start_time
+                        "game_time": start_time
                     }
                     all_games.append(game_info)
                     scraped_game_ids.add(game_id)
             
             except Exception as e:
-                logging.error(f"錯誤：處理 {year} 年 {month} 月資料時發生未知錯誤: {e}")
+                logging.error(f"錯誤：處理 {year} 年 {month} 月資料時發生未知錯誤: {e}", exc_info=True)
 
         browser.close()
         logging.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
         
-        # 【核心修改處 2】將爬取到的賽程存入資料庫
-        if all_games:
+        # 【核心修正】: 在儲存前，根據參數過濾掉過去的比賽
+        games_to_save = all_games
+        if not include_past_games:
+            today = datetime.now().date()
+            original_count = len(all_games)
+            
+            games_to_save = [
+                game for game in all_games
+                if datetime.strptime(game['date'], "%Y-%m-%d").date() >= today
+            ]
+            
+            filtered_count = original_count - len(games_to_save)
+            if filtered_count > 0:
+                logging.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
+
+        if games_to_save:
             conn = get_db_connection()
             try:
-                db_actions.update_game_schedules(conn, all_games)
+                db_actions.update_game_schedules(conn, games_to_save)
             finally:
                 conn.close()
 
-        return all_games
+        return games_to_save
 
 if __name__ == '__main__':
     TARGET_YEAR = 2025
     START_MONTH = 3
     END_MONTH = 10
     
-    schedule_data = scrape_cpbl_schedule(TARGET_YEAR, START_MONTH, END_MONTH)
+    # 直接執行此檔案時，包含過去比賽以供測試
+    schedule_data = scrape_cpbl_schedule(TARGET_YEAR, START_MONTH, END_MONTH, include_past_games=True)
 
     if schedule_data:
         print("\n--- 爬取結果 ---")

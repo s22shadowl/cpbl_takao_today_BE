@@ -27,6 +27,7 @@ def init_db():
     game_id TEXT UNIQUE,
     game_date DATE,
     game_time TEXT,
+    matchup TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     ''')
