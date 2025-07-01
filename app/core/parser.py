@@ -6,7 +6,8 @@ import datetime
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
-from app import config
+# 修正：從 app.config 匯入 settings 物件
+from app.config import settings
 
 def parse_schedule_page(html_content, year):
     """
@@ -50,7 +51,8 @@ def parse_schedule_page(html_content, year):
             box_link_tag = game_no_cell.find('a')
             if box_link_tag and box_link_tag.has_attr('href'):
                 relative_url = box_link_tag['href']
-                game_data['box_score_url'] = f"{config.BASE_URL}{relative_url}" if relative_url.startswith('/') else f"{config.BASE_URL}/{relative_url}"
+                # 修正：使用 settings 物件
+                game_data['box_score_url'] = f"{settings.BASE_URL}{relative_url}" if relative_url.startswith('/') else f"{settings.BASE_URL}/{relative_url}"
                 qs = parse_qs(urlparse(relative_url).query)
                 game_data['cpbl_game_id'] = qs.get('gameSno', [None])[0]
             
@@ -104,7 +106,8 @@ def parse_box_score_page(html_content):
             if not team_name_tag: continue
             current_team_name = team_name_tag.text.strip()
             
-            if current_team_name != config.TARGET_TEAM_NAME: continue
+            # 修正：使用 settings 物件
+            if current_team_name != settings.TARGET_TEAM_NAME: continue
 
             logging.info(f"成功匹配到目標球隊 [{current_team_name}] 的數據區塊，開始解析球員...")
             batting_stats_table = block.select_one('div.DistTitle:has(h3:-soup-contains("打擊成績")) + div.RecordTableWrap table')
@@ -117,7 +120,8 @@ def parse_box_score_page(html_content):
                     if not player_name_tag: continue
                     player_name = player_name_tag.text.strip()
                     
-                    if player_name not in config.TARGET_PLAYER_NAMES: continue
+                    # 修正：使用 settings 物件
+                    if player_name not in settings.TARGET_PLAYER_NAMES: continue
                     
                     logging.info(f"找到目標球員 [{player_name}] 的數據，準備提取...")
                     cells = player_row.find_all('td', class_='num')
@@ -232,8 +236,10 @@ def parse_season_stats_page(html_content):
             if not cells or len(cells) < 2: continue
             player_name_cell = cells[0].find('a')
             player_name = player_name_cell.text.strip() if player_name_cell else cells[0].text.strip()
-            if player_name in config.TARGET_PLAYER_NAMES:
-                stats_data = { "player_name": player_name, "team_name": config.TARGET_TEAM_NAME }
+            # 修正：使用 settings 物件
+            if player_name in settings.TARGET_PLAYER_NAMES:
+                # 修正：使用 settings 物件
+                stats_data = { "player_name": player_name, "team_name": settings.TARGET_TEAM_NAME }
                 for i, header_text in enumerate(header_cells):
                     db_col_name = header_map.get(header_text)
                     if db_col_name and (i < len(cells)):

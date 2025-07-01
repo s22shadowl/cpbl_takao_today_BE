@@ -4,13 +4,15 @@ import logging
 import time
 from playwright.sync_api import sync_playwright
 import requests
-from app.config import DEFAULT_REQUEST_TIMEOUT, PLAYWRIGHT_TIMEOUT, SCHEDULE_URL
+# 修正：從 app.config 匯入 settings 物件
+from app.config import settings
 
 def get_static_page_content(url):
     """使用 requests 獲取靜態網頁內容"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=DEFAULT_REQUEST_TIMEOUT)
+        # 修正：透過 settings 物件存取設定值
+        response = requests.get(url, headers=headers, timeout=settings.DEFAULT_REQUEST_TIMEOUT)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
@@ -24,7 +26,8 @@ def get_dynamic_page_content(url, wait_for_selector):
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             logging.info(f"Playwright: 導航至 {url}")
-            page.goto(url, timeout=PLAYWRIGHT_TIMEOUT)
+            # 修正：透過 settings 物件存取設定值
+            page.goto(url, timeout=settings.PLAYWRIGHT_TIMEOUT)
             
             logging.info(f"Playwright: 正在等待元素 '{wait_for_selector}' 變為可見")
             page.wait_for_selector(wait_for_selector, state='visible', timeout=30000)
@@ -39,12 +42,14 @@ def get_dynamic_page_content(url, wait_for_selector):
 
 def fetch_schedule_page(year, month):
     """【賽程頁專用】抓取賽程頁面，並模擬選擇年份和月份，僅回傳 HTML 字串。"""
-    logging.info(f"正在從 {SCHEDULE_URL} 獲取 {year}-{month:02d} 的賽程頁面...")
+    # 修正：透過 settings 物件存取設定值
+    logging.info(f"正在從 {settings.SCHEDULE_URL} 獲取 {year}-{month:02d} 的賽程頁面...")
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto(SCHEDULE_URL, timeout=PLAYWRIGHT_TIMEOUT)
+            # 修正：透過 settings 物件存取設定值
+            page.goto(settings.SCHEDULE_URL, timeout=settings.PLAYWRIGHT_TIMEOUT)
             page.wait_for_selector('div.item.year > select', timeout=15000)
             
             logging.info(f"Playwright: 選擇年份 '{year}'")

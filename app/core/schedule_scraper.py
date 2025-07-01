@@ -8,8 +8,9 @@ from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-from app import config
-from app.db import get_db_connection
+# 修正：匯入新的 settings 物件和 SessionLocal
+from app.config import settings
+from app.db import SessionLocal
 from app import db_actions
 
 def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_past_games: bool = False) -> List[Dict[str, Optional[str]]]:
@@ -78,7 +79,8 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
                     away_team = team_cell.find('div', class_='name away').get_text(strip=True)
                     home_team = team_cell.find('div', class_='name home').get_text(strip=True)
 
-                    if config.TARGET_TEAM_NAME not in [home_team, away_team]:
+                    # 修正：使用 settings 物件
+                    if settings.TARGET_TEAM_NAME not in [home_team, away_team]:
                         continue
 
                     start_time = ""
@@ -119,11 +121,13 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
                 logging.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
 
         if games_to_save:
-            conn = get_db_connection()
+            # 修正：使用 SQLAlchemy Session
+            db = SessionLocal()
             try:
-                db_actions.update_game_schedules(conn, games_to_save)
+                # 假設 db_actions 已更新為接受 session 物件
+                db_actions.update_game_schedules(db, games_to_save)
             finally:
-                conn.close()
+                db.close()
 
         return games_to_save
 

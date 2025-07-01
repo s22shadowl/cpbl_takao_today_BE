@@ -6,7 +6,8 @@ from datetime import datetime, timedelta
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 
-from app.db import get_db_connection
+# 修正：匯入新的 SQLAlchemy Session 工廠
+from app.db import SessionLocal
 from app import db_actions, scraper
 
 # 設定日誌
@@ -64,11 +65,13 @@ def setup_scheduler(scrape_all_season: bool = False):
     scheduler.remove_all_jobs()
     scheduler_logger.info("已移除所有舊的排程任務。")
 
-    conn = get_db_connection()
+    # 修正：使用 SQLAlchemy Session
+    db = SessionLocal()
     try:
-        schedules = db_actions.get_all_schedules(conn)
+        # 假設 db_actions 已更新為接受 session 物件
+        schedules = db_actions.get_all_schedules(db)
     finally:
-        conn.close()
+        db.close()
 
     if not schedules:
         scheduler_logger.warning("資料庫中沒有找到任何比賽排程，排程器將不會設定任何任務。")
@@ -77,14 +80,17 @@ def setup_scheduler(scrape_all_season: bool = False):
         scheduled_count = 0
         for game in schedules:
             try:
-                game_date_obj = datetime.strptime(game['game_date'], "%Y-%m-%d").date()
+                # 假設 get_all_schedules 回傳的是 ORM 物件，我們需要用 . 存取屬性
+                game_date_str = game.game_date.strftime("%Y-%m-%d")
+                game_date_obj = game.game_date
+                
                 if not scrape_all_season and game_date_obj < today:
                     continue
-            except (ValueError, TypeError):
-                scheduler_logger.warning(f"跳過比賽，因日期格式錯誤: {game.get('game_date')}")
+            except (ValueError, TypeError, AttributeError):
+                scheduler_logger.warning(f"跳過比賽，因日期格式錯誤或物件屬性問題: {game}")
                 continue
 
-            _schedule_daily_scraper(game['game_date'], game['game_time'], game.get('matchup', 'N/A'))
+            _schedule_daily_scraper(game_date_str, game.game_time, game.matchup)
             scheduled_count += 1
         scheduler_logger.info(f"排程設定完成，共處理了 {scheduled_count} 場比賽。")
 
