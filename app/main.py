@@ -15,13 +15,14 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, engine
 from app.config import settings
+
 # 【新】匯入統一的日誌設定函式
 from app.logging_config import setup_logging
 from app.tasks import (
     task_update_schedule_and_reschedule,
     task_scrape_single_day,
     task_scrape_entire_month,
-    task_scrape_entire_year
+    task_scrape_entire_year,
 )
 
 # 【新】在應用程式啟動前，立刻套用日誌設定
@@ -40,6 +41,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("應用程式正在關閉...")
 
+
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
@@ -52,6 +54,7 @@ app.add_middleware(
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
+
 async def get_api_key(api_key: str = Security(api_key_header)):
     if not api_key or api_key != settings.API_KEY:
         raise HTTPException(
@@ -63,26 +66,38 @@ async def get_api_key(api_key: str = Security(api_key_header)):
 
 # --- API 端點 ---
 
+
 @app.get("/api/games/{game_date}", response_model=List[models.GameResult])
 def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
     try:
         parsed_date = datetime.datetime.strptime(game_date, "%Y-%m-%d").date()
     except ValueError:
-        raise HTTPException(status_code=422, detail="日期格式錯誤，請使用YYYY-MM-DD 格式。")
-    
-    games = db.query(models.GameResultDB).filter(models.GameResultDB.game_date == parsed_date).all()
-    
+        raise HTTPException(
+            status_code=422, detail="日期格式錯誤，請使用YYYY-MM-DD 格式。"
+        )
+
+    games = (
+        db.query(models.GameResultDB)
+        .filter(models.GameResultDB.game_date == parsed_date)
+        .all()
+    )
+
     if not games:
-        raise HTTPException(status_code=404, detail=f"找不到日期 {game_date} 的比賽結果。")
-    
+        raise HTTPException(
+            status_code=404, detail=f"找不到日期 {game_date} 的比賽結果。"
+        )
+
     return games
 
 
 @app.post("/api/run_scraper", status_code=202, dependencies=[Depends(get_api_key)])
 def run_scraper_manually(mode: str, date: Optional[str] = None):
     if mode not in ["daily", "monthly", "yearly"]:
-        raise HTTPException(status_code=400, detail="無效的模式。請使用 'daily', 'monthly', 或 'yearly'。")
-    
+        raise HTTPException(
+            status_code=400,
+            detail="無效的模式。請使用 'daily', 'monthly', 或 'yearly'。",
+        )
+
     message = ""
     if mode == "daily":
         task_scrape_single_day.send(date)
@@ -93,7 +108,7 @@ def run_scraper_manually(mode: str, date: Optional[str] = None):
     elif mode == "yearly":
         task_scrape_entire_year.send(date)
         message = f"已將每年爬蟲任務 ({date or '今年'}) 發送到背景佇列。"
-    
+
     headers = {"Content-Type": "application/json; charset=utf-8"}
     return JSONResponse(content={"message": message}, headers=headers, status_code=202)
 
@@ -105,4 +120,8 @@ def update_schedule_manually():
     task_update_schedule_and_reschedule.send()
     logger.info("主程式：任務已成功發送，立即回傳 API 回應。")
     headers = {"Content-Type": "application/json; charset=utf-8"}
-    return JSONResponse(content={"message": "已成功將賽程更新任務發送到背景佇列。"}, headers=headers, status_code=202)
+    return JSONResponse(
+        content={"message": "已成功將賽程更新任務發送到背景佇列。"},
+        headers=headers,
+        status_code=202,
+    )

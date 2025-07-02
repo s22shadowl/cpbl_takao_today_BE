@@ -1,19 +1,28 @@
 # app/models.py
 
-from sqlalchemy import (Column, Integer, String, Date, DateTime, REAL,
-                        ForeignKey, UniqueConstraint)
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Date,
+    DateTime,
+    REAL,
+    ForeignKey,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pydantic import BaseModel, ConfigDict
 from typing import Optional
 import datetime
 
-from .db import Base # 從我們新的 db.py 匯入 Base
+from .db import Base  # 從我們新的 db.py 匯入 Base
 
 # ==============================================================================
 # 1. SQLAlchemy ORM Models (資料庫表格定義)
 #    這些類別定義了資料庫中的表格結構
 # ==============================================================================
+
 
 class GameSchedule(Base):
     __tablename__ = "game_schedules"
@@ -46,11 +55,15 @@ class GameResultDB(Base):
     game_duration = Column(String)
     attendance = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
+
     # 關聯到 player_game_summary
     player_summaries = relationship("PlayerGameSummaryDB", back_populates="game")
 
-    __table_args__ = (UniqueConstraint('game_date', 'home_team', 'away_team', name='_game_date_teams_uc'),)
+    __table_args__ = (
+        UniqueConstraint(
+            "game_date", "home_team", "away_team", name="_game_date_teams_uc"
+        ),
+    )
 
 
 class PlayerGameSummaryDB(Base):
@@ -89,15 +102,19 @@ class PlayerGameSummaryDB(Base):
 
     game = relationship("GameResultDB", back_populates="player_summaries")
     at_bat_details = relationship("AtBatDetailDB", back_populates="player_summary")
-    
-    __table_args__ = (UniqueConstraint('game_id', 'player_name', 'team_name', name='_game_player_uc'),)
+
+    __table_args__ = (
+        UniqueConstraint("game_id", "player_name", "team_name", name="_game_player_uc"),
+    )
 
 
 class AtBatDetailDB(Base):
     __tablename__ = "at_bat_details"
 
     id = Column(Integer, primary_key=True, index=True)
-    player_game_summary_id = Column(Integer, ForeignKey("player_game_summary.id"), nullable=False)
+    player_game_summary_id = Column(
+        Integer, ForeignKey("player_game_summary.id"), nullable=False
+    )
     inning = Column(Integer)
     sequence_in_game = Column(Integer)
     result_short = Column(String)
@@ -108,14 +125,20 @@ class AtBatDetailDB(Base):
     outs_before = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    player_summary = relationship("PlayerGameSummaryDB", back_populates="at_bat_details")
+    player_summary = relationship(
+        "PlayerGameSummaryDB", back_populates="at_bat_details"
+    )
 
-    __table_args__ = (UniqueConstraint('player_game_summary_id', 'sequence_in_game', name='_summary_seq_uc'),)
+    __table_args__ = (
+        UniqueConstraint(
+            "player_game_summary_id", "sequence_in_game", name="_summary_seq_uc"
+        ),
+    )
 
 
 class PlayerSeasonStatsDB(Base):
     __tablename__ = "player_season_stats"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     player_name = Column(String, unique=True, nullable=False, index=True)
     team_name = Column(String)
@@ -156,6 +179,7 @@ class PlayerSeasonStatsDB(Base):
 # 2. Pydantic Models (API 資料驗證模型)
 #    這些類別定義了 API 請求和回應的資料格式
 # ==============================================================================
+
 
 class PlayerGameSummary(BaseModel):
     id: int
@@ -200,7 +224,7 @@ class GameResult(BaseModel):
     away_score: Optional[int] = None
     venue: Optional[str] = None
     status: Optional[str] = None
-    
+
     model_config = ConfigDict(from_attributes=True)
 
 

@@ -3,6 +3,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
+
 class Settings(BaseSettings):
     # --- 資料庫設定 ---
     DATABASE_URL: str
@@ -24,14 +25,15 @@ class Settings(BaseSettings):
     BASE_URL: str = "https://www.cpbl.com.tw"
     SCHEDULE_URL: str = f"{BASE_URL}/schedule"
     TEAM_SCORE_URL: str = f"{BASE_URL}/team/teamscore"
-    
+
     # --- 爬蟲相關設定 ---
     DEFAULT_REQUEST_TIMEOUT: int = 30
     PLAYWRIGHT_TIMEOUT: int = 60000
     FRIENDLY_SCRAPING_DELAY: int = 2
 
     # 指定讀取 .env 檔案
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8')
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+
 
 # 建立一個全域可用的 settings 實例
 settings = Settings()
@@ -43,5 +45,5 @@ TEAM_CLUB_CODES = {
     "樂天桃猿": "AJL",
     "富邦悍將": "AEO",
     "味全龍": "AAA",
-    "台鋼雄鷹": "AKP"
+    "台鋼雄鷹": "AKP",
 }
