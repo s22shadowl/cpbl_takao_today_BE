@@ -1,4 +1,4 @@
-# app/main.py (日誌重構)
+# app/main.py (生命週期修正)
 
 import datetime
 import logging
@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, engine
 from app.config import settings
-
-# 【新】匯入統一的日誌設定函式
 from app.logging_config import setup_logging
 from app.tasks import (
     task_update_schedule_and_reschedule,
@@ -25,19 +23,21 @@ from app.tasks import (
     task_scrape_entire_year,
 )
 
-# 【新】在應用程式啟動前，立刻套用日誌設定
 setup_logging()
-# 【新】使用標準方式取得 logger
 logger = logging.getLogger(__name__)
 
-models.Base.metadata.create_all(bind=engine)
+# 【核心修正】: 不在模組載入時建立表格
 
 
 # --- FastAPI 應用程式設定 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 【新】使用 logger 記錄
     logger.info("應用程式啟動中...")
+    # 【核心修正】: 將表格建立的邏輯移至此處
+    # 這確保了只有在應用程式真正啟動時，才會嘗試連接資料庫並建立表格
+    logger.info("正在檢查並建立資料庫表格...")
+    models.Base.metadata.create_all(bind=engine)
+    logger.info("資料庫表格檢查完畢。")
     yield
     logger.info("應用程式正在關閉...")
 
@@ -115,7 +115,6 @@ def run_scraper_manually(mode: str, date: Optional[str] = None):
 
 @app.post("/api/update_schedule", status_code=202, dependencies=[Depends(get_api_key)])
 def update_schedule_manually():
-    # 【新】使用 logger 記錄
     logger.info("主程式：接收到更新請求，準備將任務發送到佇列...")
     task_update_schedule_and_reschedule.send()
     logger.info("主程式：任務已成功發送，立即回傳 API 回應。")
