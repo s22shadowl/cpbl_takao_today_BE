@@ -1,22 +1,22 @@
-# reset_database.py
+# reset_db.py
 #
 # 這個腳本會連接到資料庫，刪除所有由 SQLAlchemy 模型定義的表格，
 # 然後再重新建立它們，以達到清空資料的效果。
 #
 # 使用方法 (在啟用 venv 的 WSL 終端機中):
-# python reset_database.py --yes
+# python reset_db.py --yes
 
 import logging
 import argparse
 from app.db import engine, Base
-# 【新】匯入統一的日誌設定函式
 from app.logging_config import setup_logging
 # 關鍵：我們需要先導入 models，讓 Base 知道有哪些表格需要被操作
-from app import models 
+# 我們用 # noqa: F401 來告訴 linter，這個匯入雖然看起來沒被使用，但卻是必要的。
+from app import models  # noqa: F401
 
-# 【新】在模組載入時就套用日誌設定
+# 在模組載入時就套用日誌設定
 setup_logging()
-# 【新】使用標準方式取得 logger
+# 使用標準方式取得 logger
 logger = logging.getLogger(__name__)
 
 def reset_db():

@@ -1,11 +1,11 @@
 # app/models.py
 
-from sqlalchemy import (Column, Integer, String, Date, DateTime, Float, REAL,
+from sqlalchemy import (Column, Integer, String, Date, DateTime, REAL,
                         ForeignKey, UniqueConstraint)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
 import datetime
 
 from .db import Base # 從我們新的 db.py 匯入 Base

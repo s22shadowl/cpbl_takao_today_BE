@@ -13,6 +13,9 @@ from app.config import settings
 from app.db import SessionLocal
 from app import db_actions
 
+# 使用標準方式取得 logger
+logger = logging.getLogger(__name__)
+
 def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_past_games: bool = False) -> List[Dict[str, Optional[str]]]:
     """
     從中華職棒官網爬取指定年份和月份區間的賽程，並篩選目標球隊，最終存入資料庫。
@@ -23,7 +26,6 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
     scraped_game_ids = set()
 
     with sync_playwright() as p:
-        # 【核心修正】: 加入 handle_sigint 等參數來避免在 Windows Worker 中的 I/O 錯誤
         browser = p.chromium.launch(
             headless=True,
             handle_sigint=False,
@@ -32,34 +34,34 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
         )
         page = browser.new_page()
         
-        logging.info(f"正在啟動瀏覽器並前往 {schedule_page_url}...")
+        logger.info(f"正在啟動瀏覽器並前往 {schedule_page_url}...")
         page.goto(schedule_page_url, timeout=60000)
 
         try:
             page.wait_for_selector(".ScheduleSearch .month select", timeout=20000)
         except Exception as e:
-            logging.error(f"錯誤：頁面載入超時或找不到關鍵元件。 {e}")
+            logger.error(f"錯誤：頁面載入超時或找不到關鍵元件。 {e}")
             browser.close()
             return []
         
-        logging.info("頁面載入完成。")
+        logger.info("頁面載入完成。")
 
         for month in range(start_month, end_month + 1):
             try:
-                logging.info(f"正在設定查詢條件： {year} 年 {month} 月")
+                logger.info(f"正在設定查詢條件： {year} 年 {month} 月")
                 
                 page.select_option(".ScheduleSearch .year select", value=str(year))
                 page.select_option(".ScheduleSearch .month select", value=str(month - 1))
                 
                 page.wait_for_selector(".blockUI", state="hidden", timeout=15000)
-                logging.info(f"取得 {year} 年 {month} 月的資料成功。")
+                logger.info(f"取得 {year} 年 {month} 月的資料成功。")
 
                 html_content = page.content()
                 soup = BeautifulSoup(html_content, 'html.parser')
                 
                 schedule_table = soup.find('div', class_='ScheduleTableList')
                 if not schedule_table:
-                    logging.info(f"{year} 年 {month} 月沒有賽程資料。")
+                    logger.info(f"{year} 年 {month} 月沒有賽程資料。")
                     continue
                     
                 game_rows = schedule_table.find('tbody').find_all('tr')
@@ -105,10 +107,10 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
                     scraped_game_ids.add(game_id)
             
             except Exception as e:
-                logging.error(f"錯誤：處理 {year} 年 {month} 月資料時發生未知錯誤: {e}", exc_info=True)
+                logger.error(f"錯誤：處理 {year} 年 {month} 月資料時發生未知錯誤: {e}", exc_info=True)
 
         browser.close()
-        logging.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
+        logger.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
         
         games_to_save = all_games
         if not include_past_games:
@@ -122,12 +124,18 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
             
             filtered_count = original_count - len(games_to_save)
             if filtered_count > 0:
-                logging.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
+                logger.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
 
         if games_to_save:
             db = SessionLocal()
             try:
+                # 【核心修正】: 將 db 操作放入 try...except...finally 區塊
                 db_actions.update_game_schedules(db, games_to_save)
+                db.commit()
+                logger.info(f"成功提交 {len(games_to_save)} 筆賽程到資料庫。")
+            except Exception as e:
+                logger.error(f"儲存賽程時發生錯誤，交易已復原: {e}", exc_info=True)
+                db.rollback()
             finally:
                 db.close()
 

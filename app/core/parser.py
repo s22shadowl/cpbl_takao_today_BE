@@ -6,7 +6,6 @@ import datetime
 import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
-# 修正：從 app.config 匯入 settings 物件
 from app.config import settings
 
 def parse_schedule_page(html_content, year):
@@ -51,7 +50,6 @@ def parse_schedule_page(html_content, year):
             box_link_tag = game_no_cell.find('a')
             if box_link_tag and box_link_tag.has_attr('href'):
                 relative_url = box_link_tag['href']
-                # 修正：使用 settings 物件
                 game_data['box_score_url'] = f"{settings.BASE_URL}{relative_url}" if relative_url.startswith('/') else f"{settings.BASE_URL}/{relative_url}"
                 qs = parse_qs(urlparse(relative_url).query)
                 game_data['cpbl_game_id'] = qs.get('gameSno', [None])[0]
@@ -93,35 +91,40 @@ def parse_schedule_page(html_content, year):
 
 def parse_box_score_page(html_content):
     """從 Box Score 頁面 HTML 中，解析出目標球隊的目標球員基本數據和簡易打席列表。"""
-    if not html_content: return []
+    if not html_content:
+        return []
     soup = BeautifulSoup(html_content, 'lxml')
     all_players_data = []
 
     team_stat_blocks = soup.select('div.GameBoxDetail > div.tab_container > div.tab_cont')
-    if not team_stat_blocks: return []
+    if not team_stat_blocks:
+        return []
 
     for block in team_stat_blocks:
         try:
             team_name_tag = block.select_one('th.player > a')
-            if not team_name_tag: continue
+            if not team_name_tag:
+                continue
             current_team_name = team_name_tag.text.strip()
             
-            # 修正：使用 settings 物件
-            if current_team_name != settings.TARGET_TEAM_NAME: continue
+            if current_team_name != settings.TARGET_TEAM_NAME:
+                continue
 
             logging.info(f"成功匹配到目標球隊 [{current_team_name}] 的數據區塊，開始解析球員...")
             batting_stats_table = block.select_one('div.DistTitle:has(h3:-soup-contains("打擊成績")) + div.RecordTableWrap table')
-            if not batting_stats_table: continue
+            if not batting_stats_table:
+                continue
                 
             player_summary_rows = batting_stats_table.find('tbody').find_all('tr', class_=lambda c: c != 'total')
             for player_row in player_summary_rows:
                 try:
                     player_name_tag = player_row.find('span', class_='name')
-                    if not player_name_tag: continue
+                    if not player_name_tag:
+                        continue
                     player_name = player_name_tag.text.strip()
                     
-                    # 修正：使用 settings 物件
-                    if player_name not in settings.TARGET_PLAYER_NAMES: continue
+                    if player_name not in settings.TARGET_PLAYER_NAMES:
+                        continue
                     
                     logging.info(f"找到目標球員 [{player_name}] 的數據，準備提取...")
                     cells = player_row.find_all('td', class_='num')
@@ -153,7 +156,8 @@ def parse_box_score_page(html_content):
                             pbp_row = pbp_row.find_parent('tr')
                             at_bat_cells = pbp_row.find_all('td')[1:-6]
                             for cell in at_bat_cells:
-                                if cell.text.strip(): at_bat_summary_list.append(cell.text.strip())
+                                if cell.text.strip():
+                                    at_bat_summary_list.append(cell.text.strip())
                     summary_data['at_bat_results_summary'] = ",".join(at_bat_summary_list)
                     summary_data['plate_appearances'] = sum([summary_data.get(k,0) for k in ['at_bats', 'walks', 'hit_by_pitch', 'sacrifice_hits', 'sacrifice_flies']])
                     
@@ -167,7 +171,8 @@ def parse_box_score_page(html_content):
 
 def parse_active_inning_details(inning_html_content, inning):
     """【全新】從單一局數的 HTML 內容中，解析出所有事件。"""
-    if not inning_html_content: return []
+    if not inning_html_content:
+        return []
     soup = BeautifulSoup(inning_html_content, 'lxml')
     inning_events = []
     
@@ -182,7 +187,8 @@ def parse_active_inning_details(inning_html_content, inning):
                 event_data['type'] = 'at_bat'
                 hitter_name_tag = item.select_one("div.player > a > span")
                 desc_tag = item.select_one("div.info > div.desc")
-                if not hitter_name_tag or not desc_tag: continue
+                if not hitter_name_tag or not desc_tag:
+                    continue
                 
                 event_data["hitter_name"] = hitter_name_tag.text.strip()
                 description_text = ' '.join(desc_tag.stripped_strings)
@@ -217,14 +223,17 @@ def parse_active_inning_details(inning_html_content, inning):
 
 def parse_season_stats_page(html_content):
     """從球隊成績頁面 HTML 中，解析出目標球員的球季累積數據。"""
-    if not html_content: return []
+    if not html_content:
+        return []
     logging.info("正在解析球季累積數據...")
     soup = BeautifulSoup(html_content, 'lxml')
     parsed_stats = []
     batting_table = soup.find('div', class_='RecordTable')
-    if not batting_table: return []
+    if not batting_table:
+        return []
     tbody = batting_table.find('tbody')
-    if not tbody: return []
+    if not tbody:
+        return []
     player_rows = tbody.find_all('tr')
     header_map = { '出賽數': 'games_played', '打席': 'plate_appearances', '打數': 'at_bats', '打點': 'rbi', '得分': 'runs_scored', '安打': 'hits', '一安': 'singles', '二安': 'doubles', '三安': 'triples', '全壘打': 'homeruns', '壘打數': 'total_bases', '被三振': 'strikeouts', '盜壘': 'stolen_bases', '上壘率': 'obp', '長打率': 'slg', '打擊率': 'avg', '雙殺打': 'gidp', '犧短': 'sacrifice_hits', '犧飛': 'sacrifice_flies', '四壞球': 'walks', '（故四）': 'intentional_walks', '死球': 'hit_by_pitch', '盜壘刺': 'caught_stealing', '滾地出局': 'ground_outs', '高飛出局': 'fly_outs', '滾飛出局比': 'go_ao_ratio', '盜壘率': 'sb_percentage', '整體攻擊指數': 'ops', '銀棒指數': 'silver_slugger_index' }
     header_cells = [h.text.strip() for h in player_rows[0].find_all('th')]
@@ -233,12 +242,11 @@ def parse_season_stats_page(html_content):
     for row in player_data_rows:
         try:
             cells = row.find_all('td')
-            if not cells or len(cells) < 2: continue
+            if not cells or len(cells) < 2:
+                continue
             player_name_cell = cells[0].find('a')
             player_name = player_name_cell.text.strip() if player_name_cell else cells[0].text.strip()
-            # 修正：使用 settings 物件
             if player_name in settings.TARGET_PLAYER_NAMES:
-                # 修正：使用 settings 物件
                 stats_data = { "player_name": player_name, "team_name": settings.TARGET_TEAM_NAME }
                 for i, header_text in enumerate(header_cells):
                     db_col_name = header_map.get(header_text)
