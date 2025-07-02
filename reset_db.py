@@ -9,31 +9,35 @@
 import logging
 import argparse
 from app.db import engine, Base
+# 【新】匯入統一的日誌設定函式
+from app.logging_config import setup_logging
 # 關鍵：我們需要先導入 models，讓 Base 知道有哪些表格需要被操作
 from app import models 
+
+# 【新】在模組載入時就套用日誌設定
+setup_logging()
+# 【新】使用標準方式取得 logger
+logger = logging.getLogger(__name__)
 
 def reset_db():
     """
     刪除並重新建立所有資料庫表格。
     """
     try:
-        print("正在連接到資料庫並準備刪除所有表格...")
+        logger.info("正在連接到資料庫並準備刪除所有表格...")
         # Base.metadata.drop_all 會依照依賴順序，安全地刪除所有表格
         Base.metadata.drop_all(bind=engine)
-        print("所有舊表格已成功刪除。")
+        logger.info("所有舊表格已成功刪除。")
 
-        print("正在重新建立所有表格...")
+        logger.info("正在重新建立所有表格...")
         # Base.metadata.create_all 會重新建立所有表格
         Base.metadata.create_all(bind=engine)
-        print("所有表格已成功重新建立。資料庫現在是空的。")
+        logger.info("所有表格已成功重新建立。資料庫現在是空的。")
 
     except Exception as e:
-        logging.error(f"重設資料庫時發生錯誤: {e}", exc_info=True)
+        logger.error(f"重設資料庫時發生錯誤: {e}", exc_info=True)
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-
-    # 【核心修正】: 使用 argparse 處理命令列參數，取代 input()
     parser = argparse.ArgumentParser(
         description="重設資料庫，此操作會刪除所有資料並重建表格。",
         epilog="請加上 --yes 旗標來確認執行此破壞性操作。"
@@ -47,9 +51,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.yes:
-        print("已接收到 --yes 確認旗標，開始執行資料庫重設...")
+        logger.info("已接收到 --yes 確認旗標，開始執行資料庫重設...")
         reset_db()
     else:
-        print("警告：這是一個破壞性操作，將會清空所有資料。")
-        print("請加上 --yes 或 -y 旗標來確認執行。")
-        print("範例: python reset_database.py --yes")
+        logger.warning("這是一個破壞性操作，將會清空所有資料。")
+        logger.warning("請加上 --yes 或 -y 旗標來確認執行。")
+        logger.warning("範例: python reset_database.py --yes")
