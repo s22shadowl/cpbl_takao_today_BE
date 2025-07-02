@@ -1,24 +1,26 @@
-# app/main.py (Dramatiq 版 - 安全性強化)
+# app/main.py (Dramatiq 版 - P2 遷移)
 
 import datetime
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from typing import List
+from typing import List, Optional
 
-# 【新】匯入 CORS 中介軟體和 API 金鑰相關模組
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 
-# SQLAlchemy 的 Session，用於型別提示
 from sqlalchemy.orm import Session
 
-# 匯入我們新的 SQLAlchemy 模型、設定、和資料庫連線函式
-from app import models, scraper
+from app import models
 from app.db import get_db, engine
-# 【新】直接從 config 匯入 settings 實例
 from app.config import settings
-from app.tasks import task_update_schedule_and_reschedule
+# 【新】匯入所有需要的任務
+from app.tasks import (
+    task_update_schedule_and_reschedule,
+    task_scrape_single_day,
+    task_scrape_entire_month,
+    task_scrape_entire_year
+)
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -32,21 +34,17 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-# 【新】加入 CORS 中介軟體
-# 這必須在所有路由註冊之前加入
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS, # 從設定檔讀取允許的來源
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"], # 允許所有 HTTP 方法
-    allow_headers=["*"], # 允許所有 HTTP 標頭
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# 【新】API 金鑰驗證機制
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 async def get_api_key(api_key: str = Security(api_key_header)):
-    """依賴函式，用於驗證傳入的 API 金鑰"""
     if not api_key or api_key != settings.API_KEY:
         raise HTTPException(
             status_code=403,
@@ -72,19 +70,27 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
     return games
 
 
-# 【新】為此端點加上 API 金鑰保護
+# 【核心修正】: 將此端點完全遷移至 Dramatiq
 @app.post("/api/run_scraper", status_code=202, dependencies=[Depends(get_api_key)])
-def run_scraper_manually(mode: str, date: str | None = None):
+def run_scraper_manually(mode: str, date: Optional[str] = None):
     if mode not in ["daily", "monthly", "yearly"]:
         raise HTTPException(status_code=400, detail="無效的模式。請使用 'daily', 'monthly', 或 'yearly'。")
     
-    message = f"已接收到 {mode} 模式的爬蟲請求。任務佇列功能待實現。"
+    message = ""
+    if mode == "daily":
+        task_scrape_single_day.send(date)
+        message = f"已將每日爬蟲任務 ({date or '今天'}) 發送到背景佇列。"
+    elif mode == "monthly":
+        task_scrape_entire_month.send(date)
+        message = f"已將每月爬蟲任務 ({date or '本月'}) 發送到背景佇列。"
+    elif mode == "yearly":
+        task_scrape_entire_year.send(date)
+        message = f"已將每年爬蟲任務 ({date or '今年'}) 發送到背景佇列。"
     
     headers = {"Content-Type": "application/json; charset=utf-8"}
     return JSONResponse(content={"message": message}, headers=headers, status_code=202)
 
 
-# 【新】為此端點加上 API 金鑰保護
 @app.post("/api/update_schedule", status_code=202, dependencies=[Depends(get_api_key)])
 def update_schedule_manually():
     print("主程式：接收到更新請求，準備將任務發送到佇列...")
