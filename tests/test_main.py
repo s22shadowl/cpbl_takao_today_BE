@@ -6,7 +6,6 @@ from unittest.mock import MagicMock
 
 # 導入我們要測試的 app 物件和依賴函式
 from app.main import app, get_db, get_api_key
-from app.config import settings
 from app import models
 
 # --- 假的依賴函式 (Overrides) ---
