@@ -1,16 +1,15 @@
 # tests/core/test_fetcher.py
 
+import pytest
 import requests
-import time
 from playwright.sync_api import Page, expect
 from pathlib import Path
 
-# 由於我們現在只測試 fetcher.py 中的 get_static_page_content
-# 其他函式的邏輯將直接在測試案例中驗證，因此導入是可選的
+# 導入我們要測試的模組
 from app.core import fetcher
-from app import config
+from app.config import settings
 
-# --- 測試 get_static_page_content (這部分已通過，保持不變) ---
+# --- 測試 get_static_page_content ---
 
 def test_get_static_page_content_success(mocker):
     """測試 get_static_page_content 成功獲取內容的情況"""
@@ -46,10 +45,10 @@ def test_schedule_page_interaction(page: Page):
         pytest.skip("測試素材 schedule_page.html 不存在，跳過此測試。")
         
     fake_html_content = schedule_html_path.read_text(encoding="utf-8")
-    page.route(config.SCHEDULE_URL, lambda route: route.fulfill(status=200, body=fake_html_content, content_type="text/html; charset=utf-8"))
+    page.route(settings.SCHEDULE_URL, lambda route: route.fulfill(status=200, body=fake_html_content, content_type="text/html; charset=utf-8"))
 
     # 2. 執行：在 page 物件上模擬 fetch_schedule_page 函式中的操作
-    page.goto(config.SCHEDULE_URL)
+    page.goto(settings.SCHEDULE_URL)
     
     # 斷言：檢查頁面是否已載入我們的假 HTML
     expect(page.locator('a[title="列表顯示"]')).to_be_visible()
@@ -72,7 +71,7 @@ def test_dynamic_content_waits_correctly(page: Page):
     我們驗證 get_dynamic_page_content 中使用的 wait_for_selector 邏輯是有效的。
     """
     # 1. 準備
-    fake_url = f"{config.BASE_URL}/some_fake_path"
+    fake_url = f"{settings.BASE_URL}/some_fake_path"
     fake_html = "<html><body><div id='my-data' style='display:none;'>目標內容</div></body></html>"
     page.route(fake_url, lambda route: route.fulfill(status=200, body=fake_html, content_type="text/html; charset=utf-8"))
     # 模擬一個讓元素延遲可見的 JS
