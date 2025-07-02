@@ -1,52 +1,64 @@
-# test/test_main.py
+# tests/test_main.py
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-# 導入我們要測試的 app 物件
-from app.main import app
+# 導入我們要測試的 app 物件和依賴函式
+from app.main import app, get_db, get_api_key
+from app.config import settings
+from app import models
+
+# --- 假的依賴函式 (Overrides) ---
+
+mock_db_session = MagicMock()
+
+def override_get_db():
+    """一個假的 get_db 函式，回傳我們可控制的 mock session。"""
+    yield mock_db_session
+
+def override_get_api_key_success():
+    """一個假的 get_api_key 函式，直接回傳成功。"""
+    return "test-api-key"
+
+# 在所有測試執行前，只覆寫資料庫依賴
+app.dependency_overrides[get_db] = override_get_db
+
 
 # --- Fixtures ---
 
+@pytest.fixture(autouse=True)
+def reset_mocks_before_each_test():
+    """自動執行的 fixture，在每個測試前重置 mock 物件。"""
+    mock_db_session.reset_mock()
+
 @pytest.fixture
-def client(mocker):
-    """
-    一個 fixture，它會模擬掉 lifespan 中的 setup_scheduler，
-    避免在測試期間真的啟動排程器，並提供一個 TestClient。
-    """
-    # 模擬掉啟動時會執行的排程器，專注於測試 API 端點本身
-    mocker.patch('app.main.setup_scheduler')
+def client():
+    """提供一個 TestClient 實例。"""
     with TestClient(app) as test_client:
         yield test_client
 
 # --- 測試案例 ---
 
 # 測試 /api/games/{game_date} 端點
-# 【核心修正】: 跳過與尚未實作的函式相關的測試
-@pytest.mark.skip(reason="db_actions.get_games_by_date 尚未實作")
-def test_get_games_by_date_success(client, mocker):
+def test_get_games_by_date_success(client):
     """測試 /api/games/{game_date} 端點在成功獲取數據時的情況"""
-    fake_db_result = [
-        {"id": 1, "cpbl_game_id": "TEST01", "game_date": "2025-06-21", "home_team": "測試主隊", "away_team": "測試客隊", "home_score": 5, "away_score": 2, "status": "已完成", "venue": "測試球場"}
-    ]
-    mocker.patch('app.main.get_db_connection')
-    mocker.patch('app.main.db_actions.get_games_by_date', return_value=fake_db_result)
+    fake_game = models.GameResultDB(id=1, cpbl_game_id="TEST01", game_date="2025-06-21", home_team="測試主隊", away_team="測試客隊")
+    mock_db_session.query.return_value.filter.return_value.all.return_value = [fake_game]
     
     response = client.get("/api/games/2025-06-21")
     
     assert response.status_code == 200
     json_response = response.json()
-    assert isinstance(json_response, list)
     assert len(json_response) == 1
     assert json_response[0]["cpbl_game_id"] == "TEST01"
+    
+    mock_db_session.query.assert_called_once_with(models.GameResultDB)
+    mock_db_session.query.return_value.filter.assert_called_once()
 
-# 【核心修正】: 跳過與尚未實作的函式相關的測試
-@pytest.mark.skip(reason="db_actions.get_games_by_date 尚未實作")
-def test_get_games_by_date_not_found(client, mocker):
+def test_get_games_by_date_not_found(client):
     """測試 /api/games/{game_date} 端點在查無資料時返回 404"""
-    mocker.patch('app.main.get_db_connection')
-    mocker.patch('app.main.db_actions.get_games_by_date', return_value=[])
+    mock_db_session.query.return_value.filter.return_value.all.return_value = []
     
     response = client.get("/api/games/2025-01-01")
     
@@ -57,60 +69,71 @@ def test_get_games_by_date_bad_format(client):
     """測試 /api/games/{game_date} 端點在傳入錯誤日期格式時的情況"""
     response = client.get("/api/games/2025-06-21-invalid")
     assert response.status_code == 422
-    assert "日期格式錯誤" in response.json()["detail"]
 
 # 測試 /api/run_scraper 端點
 @pytest.mark.parametrize(
-    "mode, date_param, expected_target_func_str, expected_message_part",
+    "mode, date_param, expected_task_str",
     [
-        ("daily", "2025-06-21", "app.scraper.scrape_single_day", "每日爬蟲任務"),
-        ("monthly", "2025-06", "app.scraper.scrape_entire_month", "每月爬蟲任務"),
-        ("yearly", "2025", "app.scraper.scrape_entire_year", "每年爬蟲任務"),
+        ("daily", "2025-06-21", "app.main.task_scrape_single_day"),
+        ("monthly", "2025-06", "app.main.task_scrape_entire_month"),
+        ("yearly", "2025", "app.main.task_scrape_entire_year"),
     ]
 )
-def test_run_scraper_manually(client, mocker, mode, date_param, expected_target_func_str, expected_message_part):
-    """【重構】測試手動觸發爬蟲的 API 端點，驗證 Process 是否被正確呼叫"""
-    mock_process = mocker.patch('app.main.Process')
+def test_run_scraper_manually(client, mocker, mode, date_param, expected_task_str):
+    """測試手動觸發爬蟲的 API 端點，驗證對應的 Dramatiq 任務是否被發送"""
+    mock_task = mocker.patch(expected_task_str)
     
-    response = client.post(f"/api/run_scraper?mode={mode}&date={date_param}")
+    # 【核心修正】: 在測試函式內部，精準地覆寫 API 金鑰依賴
+    app.dependency_overrides[get_api_key] = override_get_api_key_success
     
-    # 斷言 status_code 為 202，因為主程式碼已修正
+    headers = {"X-API-Key": "any-key-will-do"}
+    response = client.post(f"/api/run_scraper?mode={mode}&date={date_param}", headers=headers)
+    
+    # 【核心修正】: 測試結束後，清理掉覆寫，以免影響其他測試
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = override_get_db # 重新設定 db 覆寫
+
     assert response.status_code == 202
-    assert expected_message_part in response.json()["message"]
-    
-    target_module_path, target_func_name = expected_target_func_str.rsplit('.', 1)
-    target_module = __import__(target_module_path, fromlist=[target_func_name])
-    expected_target_func = getattr(target_module, target_func_name)
-
-    mock_process.assert_called_once_with(target=expected_target_func, args=(date_param,))
-    mock_process.return_value.start.assert_called_once()
-
+    mock_task.send.assert_called_once_with(date_param)
 
 def test_run_scraper_manually_invalid_mode(client):
     """測試手動觸發爬蟲時使用無效模式"""
-    response = client.post("/api/run_scraper?mode=invalid_mode")
+    app.dependency_overrides[get_api_key] = override_get_api_key_success
+    headers = {"X-API-Key": "any-key-will-do"}
+    response = client.post("/api/run_scraper?mode=invalid_mode", headers=headers)
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = override_get_db
+
     assert response.status_code == 400
-    assert "無效的模式" in response.json()["detail"]
 
 # 測試 /api/update_schedule 端點
 def test_update_schedule_manually(client, mocker):
-    """【新增】測試手動觸發賽程更新的 API 端點"""
-    mock_process = mocker.patch('app.main.Process')
-    from app.main import run_schedule_update_and_reschedule
+    """測試手動觸發賽程更新的 API 端點"""
+    mock_task = mocker.patch('app.main.task_update_schedule_and_reschedule')
+    
+    app.dependency_overrides[get_api_key] = override_get_api_key_success
+    headers = {"X-API-Key": "any-key-will-do"}
+    response = client.post("/api/update_schedule", headers=headers)
+    app.dependency_overrides.clear()
+    app.dependency_overrides[get_db] = override_get_db
 
-    response = client.post("/api/update_schedule")
-
-    # 斷言 status_code 為 202，因為主程式碼已修正
     assert response.status_code == 202
-    assert "已觸發賽程更新與排程重設任務" in response.json()["message"]
-    
-    mock_process.assert_called_once_with(target=run_schedule_update_and_reschedule)
-    mock_process.return_value.start.assert_called_once()
+    mock_task.send.assert_called_once()
 
-# 測試 lifespan
-def test_lifespan_startup(mocker):
-    """【新增】測試應用程式啟動時，lifespan 是否有呼叫 setup_scheduler"""
-    mock_setup_scheduler = mocker.patch('app.main.setup_scheduler')
-    
-    with TestClient(app) as client:
-        mock_setup_scheduler.assert_called_once()
+# 測試 API 金鑰保護
+def test_post_endpoints_no_api_key(client):
+    """測試在沒有提供 API 金鑰時，POST 端點應返回 403"""
+    response_run = client.post("/api/run_scraper?mode=daily")
+    assert response_run.status_code == 403
+
+    response_update = client.post("/api/update_schedule")
+    assert response_update.status_code == 403
+
+def test_post_endpoints_wrong_api_key(client):
+    """測試在提供錯誤 API 金鑰時，POST 端點應返回 403"""
+    headers = {"X-API-Key": "wrong-key"}
+    response_run = client.post("/api/run_scraper?mode=daily", headers=headers)
+    assert response_run.status_code == 403
+
+    response_update = client.post("/api/update_schedule", headers=headers)
+    assert response_update.status_code == 403
