@@ -1,0 +1,53 @@
+# .github/workflows/ci.yml
+
+# 工作流程的名稱
+name: Python CI/CD
+
+# 觸發條件：在推送到 main 分支或發起拉取請求 (Pull Request) 時觸發
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+# 定義工作
+jobs:
+  build-and-test:
+    # 指定運行的虛擬機環境
+    runs-on: ubuntu-latest
+
+    # 定義步驟
+    steps:
+      # 步驟 1: 從儲存庫中取得你的程式碼
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 步驟 2: 設定 Python 環境
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12" # 指定我們專案使用的 Python 版本
+
+      # 步驟 3: 安裝專案依賴套件
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # 安裝開發/測試用的額外套件
+          pip install ruff black pytest
+
+      # 步驟 4: 安裝 Playwright 瀏覽器及其系統依賴
+      - name: Install Playwright Browsers
+        run: |
+          playwright install --with-deps
+
+      # 步驟 5: 執行程式碼風格與格式檢查
+      - name: Lint and Format Check
+        run: |
+          ruff check .
+          black --check .
+
+      # 步驟 6: 執行單元測試 (目前會失敗，因為我們還沒有測試案例)
+      - name: Run Pytest
+        run: |
+          pytest
