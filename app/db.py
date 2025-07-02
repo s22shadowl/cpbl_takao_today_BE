@@ -1,8 +1,8 @@
 # app/db.py
 
 from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+# 【核心修正】: 從 sqlalchemy.orm 匯入 declarative_base
+from sqlalchemy.orm import sessionmaker, declarative_base
 from .config import settings
 
 # 根據 .env 中的 DATABASE_URL 建立資料庫引擎

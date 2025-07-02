@@ -6,7 +6,9 @@ from typing import List, Dict, Any
 
 # SQLAlchemy 的 Session，用於型別提示
 from sqlalchemy.orm import Session
+# 【新】匯入 inspect，用於獲取模型的欄位資訊
 from sqlalchemy.inspection import inspect
+# 匯入我們定義的 SQLAlchemy 模型
 from . import models
 
 def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
@@ -77,7 +79,8 @@ def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, An
 
 def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dict[str, Any]]):
     """【ORM版】準備多位球員的單場總結與完整的逐打席記錄以供儲存。"""
-    if not all_players_data: return
+    if not all_players_data:
+        return
 
     summary_cols = {c.key for c in inspect(models.PlayerGameSummaryDB).column_attrs}
     detail_cols = {c.key for c in inspect(models.AtBatDetailDB).column_attrs}
@@ -85,12 +88,14 @@ def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dic
     for player_data in all_players_data:
         summary_dict = player_data.get("summary", {})
         at_bats_details_list = player_data.get("at_bats_details", [])
-        if not summary_dict: continue
+        if not summary_dict:
+            continue
         
         player_name = summary_dict.get("player_name")
 
         try:
             summary_dict['game_id'] = game_id
+            
             filtered_summary = {k: v for k, v in summary_dict.items() if k in summary_cols}
             
             existing_summary = db.query(models.PlayerGameSummaryDB).filter_by(
@@ -115,6 +120,7 @@ def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dic
 
             for detail_dict in at_bats_details_list:
                 detail_dict['player_game_summary_id'] = player_game_summary_id
+                
                 filtered_detail = {k: v for k, v in detail_dict.items() if k in detail_cols}
                 
                 existing_detail = db.query(models.AtBatDetailDB).filter_by(

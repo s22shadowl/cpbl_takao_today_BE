@@ -103,10 +103,10 @@ def setup_scheduler(scrape_all_season: bool = False):
     if jobs:
         try:
             next_job = min(jobs, key=lambda job: job.next_run_time)
-            logger.info(f"--- 下一次排程任務 ---")
+            logger.info("--- 下一次排程任務 ---")
             logger.info(f"執行時間: {next_job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
             logger.info(f"任務內容: {next_job.name}")
-            logger.info(f"----------------------")
+            logger.info("----------------------")
         except Exception as e:
             logger.error(f"尋找下一個任務時發生錯誤: {e}")
     else:

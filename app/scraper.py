@@ -3,7 +3,6 @@
 import datetime
 import time
 import logging
-import os
 from playwright.sync_api import sync_playwright, expect
 import re
 from app.utils.state_machine import _update_outs_count, _update_runners_state
@@ -18,7 +17,6 @@ from app.db import SessionLocal
 # 【新】使用標準方式取得 logger
 logger = logging.getLogger(__name__)
 
-# 【舊的日誌設定已移除】
 
 # --- 主要爬蟲邏輯函式 ---
 
@@ -53,11 +51,12 @@ def scrape_and_store_season_stats():
         if db:
             db.close()
     
-    logger.info(f"--- 球季累積數據抓取完畢 ---")
+    logger.info("--- 球季累積數據抓取完畢 ---")
 
 def _process_filtered_games(games_to_process):
     """【交易管理重構版】處理比賽列表，採用最終正確的「逐局切換、展開、解析」互動邏輯。"""
-    if not games_to_process: return
+    if not games_to_process:
+        return
     logger.info(f"準備處理 {len(games_to_process)} 場比賽...")
     
     with sync_playwright() as p:
@@ -72,19 +71,24 @@ def _process_filtered_games(games_to_process):
         for game_info in games_to_process:
             db = SessionLocal()
             try:
-                if game_info.get('status') != "已完成": continue
-                if settings.TARGET_TEAM_NAME not in [game_info.get('home_team'), game_info.get('away_team')]: continue
+                if game_info.get('status') != "已完成":
+                    continue
+                if settings.TARGET_TEAM_NAME not in [game_info.get('home_team'), game_info.get('away_team')]:
+                    continue
                 
                 logger.info(f"處理目標球隊比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
                 game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
-                if not game_id_in_db: continue
+                if not game_id_in_db:
+                    continue
                 box_score_url = game_info.get('box_score_url')
-                if not box_score_url: continue
+                if not box_score_url:
+                    continue
                 
                 page.goto(box_score_url, timeout=settings.PLAYWRIGHT_TIMEOUT)
                 page.wait_for_selector("div.GameBoxDetail", state='visible', timeout=30000)
                 all_players_data = html_parser.parse_box_score_page(page.content())
-                if not all_players_data: continue
+                if not all_players_data:
+                    continue
                 
                 live_url = box_score_url.replace('/box?', '/box/live?')
                 page.goto(live_url, wait_until="load", timeout=settings.PLAYWRIGHT_TIMEOUT)
@@ -110,7 +114,8 @@ def _process_filtered_games(games_to_process):
                             try:
                                 if button.is_visible(timeout=500):
                                     button.click(timeout=500)
-                            except Exception: pass
+                            except Exception:
+                                pass
                     
                     inning_html = active_inning_content.inner_html()
                     parsed_events = html_parser.parse_active_inning_details(inning_html, inning_num)
@@ -150,7 +155,8 @@ def _process_filtered_games(games_to_process):
                         seq = i + 1
                         merged_at_bat = {"result_short": result_short, "sequence_in_game": seq}
                         detail_match = next((d for d in player_live_details if d.get('sequence_in_game') == seq), None)
-                        if detail_match: merged_at_bat.update(detail_match)
+                        if detail_match:
+                            merged_at_bat.update(detail_match)
                         player_data["at_bats_details"].append(merged_at_bat)
                         
                 db_actions.store_player_game_data(db, game_id_in_db, all_players_data)
@@ -162,7 +168,8 @@ def _process_filtered_games(games_to_process):
                 logger.error(f"處理比賽 {game_info.get('cpbl_game_id')} 時發生未知錯誤，將復原此比賽的所有變更: {e}", exc_info=True)
                 db.rollback()
             finally:
-                if db: db.close()
+                if db:
+                    db.close()
 
 # --- 主功能函式 ---
 def scrape_single_day(specific_date=None):
@@ -185,13 +192,13 @@ def scrape_single_day(specific_date=None):
     
     html_content = fetcher.fetch_schedule_page(target_date_obj.year, target_date_obj.month)
     if not html_content:
-        logger.info(f"--- [單日模式] 因無法獲取月賽程而中止 ---")
+        logger.info("--- [單日模式] 因無法獲取月賽程而中止 ---")
         return
 
     all_month_games = html_parser.parse_schedule_page(html_content, target_date_obj.year)
     games_for_day = [game for game in all_month_games if game.get('game_date') == target_date_str]
     _process_filtered_games(games_for_day)
-    logger.info(f"--- [單日模式] 執行完畢 ---")
+    logger.info("--- [單日模式] 執行完畢 ---")
 
 def scrape_entire_month(month_str=None):
     """【功能二】專門抓取並處理指定月份的所有「已完成」比賽數據。"""
@@ -204,7 +211,8 @@ def scrape_entire_month(month_str=None):
         return
 
     html_content = fetcher.fetch_schedule_page(target_date_obj.year, target_date_obj.month)
-    if not html_content: return
+    if not html_content:
+        return
         
     all_month_games = html_parser.parse_schedule_page(html_content, target_date_obj.year)
     
@@ -214,7 +222,7 @@ def scrape_entire_month(month_str=None):
     else:
         _process_filtered_games(all_month_games)
         
-    logger.info(f"--- [逐月模式] 執行完畢 ---")
+    logger.info("--- [逐月模式] 執行完畢 ---")
 
 def scrape_entire_year(year_str=None):
     """【功能三】專門抓取並處理指定年份的所有「已完成」比賽數據。"""
@@ -239,4 +247,4 @@ def scrape_entire_year(year_str=None):
                 _process_filtered_games(games_to_process)
         logger.info(f"處理完 {year_to_scrape}-{month:02d}，稍作等待...")
         time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
-    logger.info(f"--- [逐年模式] 執行完畢 ---")
+    logger.info("--- [逐年模式] 執行完畢 ---")
