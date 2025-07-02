@@ -3,7 +3,6 @@
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from datetime import date
 
 # 導入我們要測試的資料庫操作函式和 ORM 模型
 from app import db_actions, models
