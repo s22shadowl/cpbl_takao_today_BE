@@ -1,6 +1,7 @@
-# app/main.py (Dramatiq 版 - P2 遷移)
+# app/main.py (日誌重構)
 
 import datetime
+import logging
 from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -14,7 +15,8 @@ from sqlalchemy.orm import Session
 from app import models
 from app.db import get_db, engine
 from app.config import settings
-# 【新】匯入所有需要的任務
+# 【新】匯入統一的日誌設定函式
+from app.logging_config import setup_logging
 from app.tasks import (
     task_update_schedule_and_reschedule,
     task_scrape_single_day,
@@ -22,15 +24,21 @@ from app.tasks import (
     task_scrape_entire_year
 )
 
+# 【新】在應用程式啟動前，立刻套用日誌設定
+setup_logging()
+# 【新】使用標準方式取得 logger
+logger = logging.getLogger(__name__)
+
 models.Base.metadata.create_all(bind=engine)
 
 
 # --- FastAPI 應用程式設定 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("應用程式啟動中...")
+    # 【新】使用 logger 記錄
+    logger.info("應用程式啟動中...")
     yield
-    print("應用程式正在關閉...")
+    logger.info("應用程式正在關閉...")
 
 app = FastAPI(lifespan=lifespan)
 
@@ -70,7 +78,6 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
     return games
 
 
-# 【核心修正】: 將此端點完全遷移至 Dramatiq
 @app.post("/api/run_scraper", status_code=202, dependencies=[Depends(get_api_key)])
 def run_scraper_manually(mode: str, date: Optional[str] = None):
     if mode not in ["daily", "monthly", "yearly"]:
@@ -93,8 +100,9 @@ def run_scraper_manually(mode: str, date: Optional[str] = None):
 
 @app.post("/api/update_schedule", status_code=202, dependencies=[Depends(get_api_key)])
 def update_schedule_manually():
-    print("主程式：接收到更新請求，準備將任務發送到佇列...")
+    # 【新】使用 logger 記錄
+    logger.info("主程式：接收到更新請求，準備將任務發送到佇列...")
     task_update_schedule_and_reschedule.send()
-    print("主程式：任務已成功發送，立即回傳 API 回應。")
+    logger.info("主程式：任務已成功發送，立即回傳 API 回應。")
     headers = {"Content-Type": "application/json; charset=utf-8"}
     return JSONResponse(content={"message": "已成功將賽程更新任務發送到背景佇列。"}, headers=headers, status_code=202)
