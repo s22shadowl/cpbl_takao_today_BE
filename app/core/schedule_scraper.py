@@ -8,7 +8,7 @@ from typing import List, Dict, Optional
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-# 修正：匯入新的 settings 物件和 SessionLocal
+# 匯入新的 settings 物件和 SessionLocal
 from app.config import settings
 from app.db import SessionLocal
 from app import db_actions
@@ -23,7 +23,13 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
     scraped_game_ids = set()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # 【核心修正】: 加入 handle_sigint 等參數來避免在 Windows Worker 中的 I/O 錯誤
+        browser = p.chromium.launch(
+            headless=True,
+            handle_sigint=False,
+            handle_sigterm=False,
+            handle_sighup=False,
+        )
         page = browser.new_page()
         
         logging.info(f"正在啟動瀏覽器並前往 {schedule_page_url}...")
@@ -79,7 +85,6 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
                     away_team = team_cell.find('div', class_='name away').get_text(strip=True)
                     home_team = team_cell.find('div', class_='name home').get_text(strip=True)
 
-                    # 修正：使用 settings 物件
                     if settings.TARGET_TEAM_NAME not in [home_team, away_team]:
                         continue
 
@@ -105,7 +110,6 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
         browser.close()
         logging.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
         
-        # 【核心修正】: 在儲存前，根據參數過濾掉過去的比賽
         games_to_save = all_games
         if not include_past_games:
             today = datetime.now().date()
@@ -121,10 +125,8 @@ def scrape_cpbl_schedule(year: int, start_month: int, end_month: int, include_pa
                 logging.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
 
         if games_to_save:
-            # 修正：使用 SQLAlchemy Session
             db = SessionLocal()
             try:
-                # 假設 db_actions 已更新為接受 session 物件
                 db_actions.update_game_schedules(db, games_to_save)
             finally:
                 db.close()
@@ -136,7 +138,6 @@ if __name__ == '__main__':
     START_MONTH = 3
     END_MONTH = 10
     
-    # 直接執行此檔案時，包含過去比賽以供測試
     schedule_data = scrape_cpbl_schedule(TARGET_YEAR, START_MONTH, END_MONTH, include_past_games=True)
 
     if schedule_data:
