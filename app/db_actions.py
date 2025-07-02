@@ -6,10 +6,13 @@ from typing import List, Dict, Any
 
 # SQLAlchemy 的 Session，用於型別提示
 from sqlalchemy.orm import Session
+
 # 【新】匯入 inspect，用於獲取模型的欄位資訊
 from sqlalchemy.inspection import inspect
+
 # 匯入我們定義的 SQLAlchemy 模型
 from . import models
+
 
 def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
     """
@@ -18,26 +21,32 @@ def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
     :return: 該筆比賽記錄在資料庫中的 id (int)，如果失敗則返回 None
     """
     try:
-        cpbl_game_id = game_info.get('cpbl_game_id')
+        cpbl_game_id = game_info.get("cpbl_game_id")
         if not cpbl_game_id:
             return None
 
-        existing_game = db.query(models.GameResultDB).filter(models.GameResultDB.cpbl_game_id == cpbl_game_id).first()
+        existing_game = (
+            db.query(models.GameResultDB)
+            .filter(models.GameResultDB.cpbl_game_id == cpbl_game_id)
+            .first()
+        )
 
         if existing_game:
             # 如果已存在，直接返回 ID，不需要再次 flush
             return existing_game.id
         else:
             game_data_for_db = {
-                'cpbl_game_id': game_info.get('cpbl_game_id'),
-                'game_date': datetime.datetime.strptime(game_info['game_date'], "%Y-%m-%d").date(),
-                'game_time': game_info.get('game_time'),
-                'home_team': game_info.get('home_team'),
-                'away_team': game_info.get('away_team'),
-                'home_score': game_info.get('home_score'),
-                'away_score': game_info.get('away_score'),
-                'venue': game_info.get('venue'),
-                'status': game_info.get('status'),
+                "cpbl_game_id": game_info.get("cpbl_game_id"),
+                "game_date": datetime.datetime.strptime(
+                    game_info["game_date"], "%Y-%m-%d"
+                ).date(),
+                "game_time": game_info.get("game_time"),
+                "home_team": game_info.get("home_team"),
+                "away_team": game_info.get("away_team"),
+                "home_score": game_info.get("home_score"),
+                "away_score": game_info.get("away_score"),
+                "venue": game_info.get("venue"),
+                "status": game_info.get("status"),
             }
             new_game = models.GameResultDB(**game_data_for_db)
             db.add(new_game)
@@ -49,7 +58,8 @@ def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
     except Exception as e:
         logging.error(f"準備儲存比賽結果時出錯: {e}", exc_info=True)
         # 【核心修正】: 移除 rollback，讓上層呼叫者決定如何處理交易
-        raise # 向上拋出異常，讓上層處理
+        raise  # 向上拋出異常，讓上層處理
+
 
 def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, Any]]):
     """
@@ -59,25 +69,28 @@ def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, An
         return
 
     logging.info(f"準備批次更新 {len(season_stats_list)} 位球員的球季累積數據...")
-    player_names_to_update = [stats['player_name'] for stats in season_stats_list]
+    player_names_to_update = [stats["player_name"] for stats in season_stats_list]
 
     try:
         db.query(models.PlayerSeasonStatsDB).filter(
             models.PlayerSeasonStatsDB.player_name.in_(player_names_to_update)
         ).delete(synchronize_session=False)
-        
+
         new_stats_objects = []
         for stats in season_stats_list:
-            stats['data_retrieved_date'] = datetime.date.today().strftime("%Y-%m-%d")
+            stats["data_retrieved_date"] = datetime.date.today().strftime("%Y-%m-%d")
             new_stats_objects.append(models.PlayerSeasonStatsDB(**stats))
-            
+
         db.add_all(new_stats_objects)
         logging.info(f"已準備 {len(new_stats_objects)} 筆球員球季數據待提交。")
     except Exception as e:
         logging.error(f"準備更新球員球季數據時出錯: {e}", exc_info=True)
         raise
 
-def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dict[str, Any]]):
+
+def store_player_game_data(
+    db: Session, game_id: int, all_players_data: List[Dict[str, Any]]
+):
     """【ORM版】準備多位球員的單場總結與完整的逐打席記錄以供儲存。"""
     if not all_players_data:
         return
@@ -90,18 +103,21 @@ def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dic
         at_bats_details_list = player_data.get("at_bats_details", [])
         if not summary_dict:
             continue
-        
+
         player_name = summary_dict.get("player_name")
 
         try:
-            summary_dict['game_id'] = game_id
-            
-            filtered_summary = {k: v for k, v in summary_dict.items() if k in summary_cols}
-            
-            existing_summary = db.query(models.PlayerGameSummaryDB).filter_by(
-                game_id=game_id, 
-                player_name=player_name
-            ).first()
+            summary_dict["game_id"] = game_id
+
+            filtered_summary = {
+                k: v for k, v in summary_dict.items() if k in summary_cols
+            }
+
+            existing_summary = (
+                db.query(models.PlayerGameSummaryDB)
+                .filter_by(game_id=game_id, player_name=player_name)
+                .first()
+            )
 
             if existing_summary:
                 for key, value in filtered_summary.items():
@@ -110,23 +126,31 @@ def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dic
             else:
                 summary_orm_object = models.PlayerGameSummaryDB(**filtered_summary)
                 db.add(summary_orm_object)
-            
-            db.flush() 
-            
+
+            db.flush()
+
             player_game_summary_id = summary_orm_object.id
             if not player_game_summary_id:
-                logging.warning(f"無法取得球員 {player_name} 在比賽 {game_id} 的 summary_id。")
+                logging.warning(
+                    f"無法取得球員 {player_name} 在比賽 {game_id} 的 summary_id。"
+                )
                 continue
 
             for detail_dict in at_bats_details_list:
-                detail_dict['player_game_summary_id'] = player_game_summary_id
-                
-                filtered_detail = {k: v for k, v in detail_dict.items() if k in detail_cols}
-                
-                existing_detail = db.query(models.AtBatDetailDB).filter_by(
-                    player_game_summary_id=player_game_summary_id,
-                    sequence_in_game=detail_dict.get('sequence_in_game')
-                ).first()
+                detail_dict["player_game_summary_id"] = player_game_summary_id
+
+                filtered_detail = {
+                    k: v for k, v in detail_dict.items() if k in detail_cols
+                }
+
+                existing_detail = (
+                    db.query(models.AtBatDetailDB)
+                    .filter_by(
+                        player_game_summary_id=player_game_summary_id,
+                        sequence_in_game=detail_dict.get("sequence_in_game"),
+                    )
+                    .first()
+                )
 
                 if existing_detail:
                     for key, value in filtered_detail.items():
@@ -134,46 +158,57 @@ def store_player_game_data(db: Session, game_id: int, all_players_data: List[Dic
                 else:
                     db.add(models.AtBatDetailDB(**filtered_detail))
 
-            logging.info(f"已準備球員 [{player_name}] 的 {len(at_bats_details_list)} 筆逐打席記錄待提交。")
+            logging.info(
+                f"已準備球員 [{player_name}] 的 {len(at_bats_details_list)} 筆逐打席記錄待提交。"
+            )
 
         except Exception as e:
-            logging.error(f"準備儲存球員 [{player_name}] 的單場比賽數據時出錯: {e}", exc_info=True)
+            logging.error(
+                f"準備儲存球員 [{player_name}] 的單場比賽數據時出錯: {e}", exc_info=True
+            )
             raise
+
 
 def update_game_schedules(db: Session, games_list: List[Dict[str, Any]]):
     """【ORM版】準備比賽排程表以供更新。"""
     if not games_list:
         logging.info("沒有新的比賽排程需要更新。")
         return
-        
+
     logging.info(f"準備更新資料庫中的比賽排程，共 {len(games_list)} 場...")
-    
+
     try:
         num_deleted = db.query(models.GameSchedule).delete()
         logging.info(f"已準備清空舊的比賽排程 ({num_deleted} 筆)。")
-        
+
         data_to_insert = []
         for game in games_list:
-            data_to_insert.append(models.GameSchedule(
-                game_id=game.get("game_id"),
-                game_date=datetime.datetime.strptime(game['date'], "%Y-%m-%d").date(),
-                game_time=game.get("game_time"),
-                matchup=game.get("matchup")
-            ))
-        
+            data_to_insert.append(
+                models.GameSchedule(
+                    game_id=game.get("game_id"),
+                    game_date=datetime.datetime.strptime(
+                        game["date"], "%Y-%m-%d"
+                    ).date(),
+                    game_time=game.get("game_time"),
+                    matchup=game.get("matchup"),
+                )
+            )
+
         db.add_all(data_to_insert)
         logging.info(f"已準備寫入 {len(data_to_insert)} 筆新的比賽排程。")
     except Exception as e:
         logging.error(f"準備更新比賽排程時發生錯誤: {e}", exc_info=True)
         raise
 
+
 def get_all_schedules(db: Session) -> List[models.GameSchedule]:
     """【ORM版】從資料庫獲取所有已儲存的比賽排程。"""
     try:
-        schedules = db.query(models.GameSchedule).order_by(
-            models.GameSchedule.game_date, 
-            models.GameSchedule.game_time
-        ).all()
+        schedules = (
+            db.query(models.GameSchedule)
+            .order_by(models.GameSchedule.game_date, models.GameSchedule.game_time)
+            .all()
+        )
         return schedules
     except Exception as e:
         logging.error(f"獲取比賽排程時發生錯誤: {e}", exc_info=True)

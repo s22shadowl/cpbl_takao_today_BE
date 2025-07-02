@@ -10,6 +10,7 @@ import logging
 import argparse
 from app.db import engine, Base
 from app.logging_config import setup_logging
+
 # 關鍵：我們需要先導入 models，讓 Base 知道有哪些表格需要被操作
 # 我們用 # noqa: F401 來告訴 linter，這個匯入雖然看起來沒被使用，但卻是必要的。
 from app import models  # noqa: F401
@@ -18,6 +19,7 @@ from app import models  # noqa: F401
 setup_logging()
 # 使用標準方式取得 logger
 logger = logging.getLogger(__name__)
+
 
 def reset_db():
     """
@@ -37,16 +39,14 @@ def reset_db():
     except Exception as e:
         logger.error(f"重設資料庫時發生錯誤: {e}", exc_info=True)
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="重設資料庫，此操作會刪除所有資料並重建表格。",
-        epilog="請加上 --yes 旗標來確認執行此破壞性操作。"
+        epilog="請加上 --yes 旗標來確認執行此破壞性操作。",
     )
     parser.add_argument(
-        '--yes',
-        '-y',
-        action='store_true',
-        help='自動確認操作，不會出現互動式提示。'
+        "--yes", "-y", action="store_true", help="自動確認操作，不會出現互動式提示。"
     )
     args = parser.parse_args()
 

@@ -1,6 +1,7 @@
 # app/db.py
 
 from sqlalchemy import create_engine
+
 # 【核心修正】: 從 sqlalchemy.orm 匯入 declarative_base
 from sqlalchemy.orm import sessionmaker, declarative_base
 from .config import settings

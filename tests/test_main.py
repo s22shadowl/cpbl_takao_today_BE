@@ -12,13 +12,16 @@ from app import models
 
 mock_db_session = MagicMock()
 
+
 def override_get_db():
     """一個假的 get_db 函式，回傳我們可控制的 mock session。"""
     yield mock_db_session
 
+
 def override_get_api_key_success():
     """一個假的 get_api_key 函式，直接回傳成功。"""
     return "test-api-key"
+
 
 # 在所有測試執行前，只覆寫資料庫依賴
 app.dependency_overrides[get_db] = override_get_db
@@ -26,10 +29,12 @@ app.dependency_overrides[get_db] = override_get_db
 
 # --- Fixtures ---
 
+
 @pytest.fixture(autouse=True)
 def reset_mocks_before_each_test():
     """自動執行的 fixture，在每個測試前重置 mock 物件。"""
     mock_db_session.reset_mock()
+
 
 @pytest.fixture
 def client():
@@ -37,37 +42,50 @@ def client():
     with TestClient(app) as test_client:
         yield test_client
 
+
 # --- 測試案例 ---
+
 
 # 測試 /api/games/{game_date} 端點
 def test_get_games_by_date_success(client):
     """測試 /api/games/{game_date} 端點在成功獲取數據時的情況"""
-    fake_game = models.GameResultDB(id=1, cpbl_game_id="TEST01", game_date="2025-06-21", home_team="測試主隊", away_team="測試客隊")
-    mock_db_session.query.return_value.filter.return_value.all.return_value = [fake_game]
-    
+    fake_game = models.GameResultDB(
+        id=1,
+        cpbl_game_id="TEST01",
+        game_date="2025-06-21",
+        home_team="測試主隊",
+        away_team="測試客隊",
+    )
+    mock_db_session.query.return_value.filter.return_value.all.return_value = [
+        fake_game
+    ]
+
     response = client.get("/api/games/2025-06-21")
-    
+
     assert response.status_code == 200
     json_response = response.json()
     assert len(json_response) == 1
     assert json_response[0]["cpbl_game_id"] == "TEST01"
-    
+
     mock_db_session.query.assert_called_once_with(models.GameResultDB)
     mock_db_session.query.return_value.filter.assert_called_once()
+
 
 def test_get_games_by_date_not_found(client):
     """測試 /api/games/{game_date} 端點在查無資料時返回 404"""
     mock_db_session.query.return_value.filter.return_value.all.return_value = []
-    
+
     response = client.get("/api/games/2025-01-01")
-    
+
     assert response.status_code == 404
     assert "找不到日期" in response.json()["detail"]
+
 
 def test_get_games_by_date_bad_format(client):
     """測試 /api/games/{game_date} 端點在傳入錯誤日期格式時的情況"""
     response = client.get("/api/games/2025-06-21-invalid")
     assert response.status_code == 422
+
 
 # 測試 /api/run_scraper 端點
 @pytest.mark.parametrize(
@@ -76,24 +94,27 @@ def test_get_games_by_date_bad_format(client):
         ("daily", "2025-06-21", "app.main.task_scrape_single_day"),
         ("monthly", "2025-06", "app.main.task_scrape_entire_month"),
         ("yearly", "2025", "app.main.task_scrape_entire_year"),
-    ]
+    ],
 )
 def test_run_scraper_manually(client, mocker, mode, date_param, expected_task_str):
     """測試手動觸發爬蟲的 API 端點，驗證對應的 Dramatiq 任務是否被發送"""
     mock_task = mocker.patch(expected_task_str)
-    
+
     # 【核心修正】: 在測試函式內部，精準地覆寫 API 金鑰依賴
     app.dependency_overrides[get_api_key] = override_get_api_key_success
-    
+
     headers = {"X-API-Key": "any-key-will-do"}
-    response = client.post(f"/api/run_scraper?mode={mode}&date={date_param}", headers=headers)
-    
+    response = client.post(
+        f"/api/run_scraper?mode={mode}&date={date_param}", headers=headers
+    )
+
     # 【核心修正】: 測試結束後，清理掉覆寫，以免影響其他測試
     app.dependency_overrides.clear()
-    app.dependency_overrides[get_db] = override_get_db # 重新設定 db 覆寫
+    app.dependency_overrides[get_db] = override_get_db  # 重新設定 db 覆寫
 
     assert response.status_code == 202
     mock_task.send.assert_called_once_with(date_param)
+
 
 def test_run_scraper_manually_invalid_mode(client):
     """測試手動觸發爬蟲時使用無效模式"""
@@ -105,11 +126,12 @@ def test_run_scraper_manually_invalid_mode(client):
 
     assert response.status_code == 400
 
+
 # 測試 /api/update_schedule 端點
 def test_update_schedule_manually(client, mocker):
     """測試手動觸發賽程更新的 API 端點"""
-    mock_task = mocker.patch('app.main.task_update_schedule_and_reschedule')
-    
+    mock_task = mocker.patch("app.main.task_update_schedule_and_reschedule")
+
     app.dependency_overrides[get_api_key] = override_get_api_key_success
     headers = {"X-API-Key": "any-key-will-do"}
     response = client.post("/api/update_schedule", headers=headers)
@@ -119,6 +141,7 @@ def test_update_schedule_manually(client, mocker):
     assert response.status_code == 202
     mock_task.send.assert_called_once()
 
+
 # 測試 API 金鑰保護
 def test_post_endpoints_no_api_key(client):
     """測試在沒有提供 API 金鑰時，POST 端點應返回 403"""
@@ -127,6 +150,7 @@ def test_post_endpoints_no_api_key(client):
 
     response_update = client.post("/api/update_schedule")
     assert response_update.status_code == 403
+
 
 def test_post_endpoints_wrong_api_key(client):
     """測試在提供錯誤 API 金鑰時，POST 端點應返回 403"""
