@@ -1,8 +1,9 @@
+# Python
+# ----------------------------------------------------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 
 # C extensions
 *.so
@@ -28,88 +29,67 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Python Virtual Environment
-# 強烈建議虛擬環境資料夾的名稱與此處一致，或者根據你的實際名稱修改
+# Virtual Environments
+# ----------------------------------------------------------------
 venv/
 .venv/
 ENV/
 env/
-ENV3/
-env3/
-VENV/
-venv.bak/
-.env  # 如果你使用 .env 檔案存放環境變數，且其中包含敏感資訊
 
-# SQLite Database
-# 根據你的資料庫檔案實際存放路徑和名稱調整
-# 如果在 app/data/ 目錄下
-app/data/*.db
-app/data/*.db3
-app/data/*.sqlite
-app/data/*.sqlite3
-app/data/*.db-journal # SQLite journal file
-app/data/*.db-shm     # SQLite shared memory file
-app/data/*.db-wal     # SQLite write-ahead log file
+# Secrets
+# ----------------------------------------------------------------
+# 包含敏感資訊的環境變數檔案
+.env
 
-# 如果資料庫檔案在專案根目錄
-# *.db
-# *.db3
-# *.sqlite
-# *.sqlite3
-# *.db-journal
-# *.db-shm
-# *.db-wal
 
+# Project Specific
+# ----------------------------------------------------------------
 # Log files
 logs/
 *.log
-# 如果你有其他日誌檔案命名模式，也一併加入
-# e.g., app/logs/
 
-# Playwright (通常瀏覽器驅動安裝在系統路徑，但以防萬一有本地快取)
-# playwright-report/
-# test-results/
+# Local database files (in case of accidental creation)
+*.db
+*.db-journal
+*.db3
+*.sqlite
+*.sqlite3
 
-# IDE / Editor specific files
-.idea/           # JetBrains IDEs (PyCharm, IntelliJ)
-.vscode/         # Visual Studio Code (除非你想共享推薦擴展等設定檔 `extensions.json`, `settings.json`)
+# Playwright reports
+playwright-report/
+test-results/
+
+
+# Testing & Coverage
+# ----------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+
+# Caches
+# ----------------------------------------------------------------
+.cache/
+.mypy_cache/
+.ruff_cache/
+
+
+# IDE / Editor specific
+# ----------------------------------------------------------------
+.vscode/
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
 
+
 # OS generated files
-.DS_Store        # macOS
-Thumbs.db        # Windows
-ehthumbs.db      # Windows
-Desktop.ini      # Windows
-
-# Coverage reports
-.coverage
-.coverage.*
-htmlcov/
-coverage.xml
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints
-
-# dotenv environment variables file (如果包含敏感資訊)
-# .env  (已在 Python Virtual Environment 區塊提及)
-
-# PyInstaller
-# Usually pyinstaller dist/ and build/ folders are covered by Distribution / packaging
-*.spec
-
-# Instance folder (e.g. Flask instance-specific config)
-# instance/ (如果適用)
-
-# pytest cache
-.pytest_cache/
-.cache/
-
-# mypy cache
-.mypy_cache/
-
-# Ruff cache
-.ruff_cache/
+# ----------------------------------------------------------------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
