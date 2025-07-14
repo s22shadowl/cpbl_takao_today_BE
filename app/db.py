@@ -1,28 +1,26 @@
 # app/db.py
 
+import os  # <--- 新增
 from sqlalchemy import create_engine
-
-# 【核心修正】: 從 sqlalchemy.orm 匯入 declarative_base
 from sqlalchemy.orm import sessionmaker, declarative_base
-from .config import settings
 
-# 根據 .env 中的 DATABASE_URL 建立資料庫引擎
-engine = create_engine(settings.DATABASE_URL)
+# from .config import settings # <--- 不再需要從 config 讀取
 
-# 建立一個 SessionLocal 類別，它將作為資料庫會話的工廠
+# --- 最終修正 ---
+# 直接從環境變數讀取 DATABASE_URL
+# 如果讀不到，就拋出明確的錯誤
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL 環境變數未設定，應用程式無法啟動。")
+
+# 使用直接讀取到的 URL 建立資料庫引擎
+engine = create_engine(DATABASE_URL)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-# 建立一個 Base 類別，我們的 ORM 模型將繼承它
 Base = declarative_base()
 
 
-# --- FastAPI 依賴注入 (Dependency Injection) ---
 def get_db():
-    """
-    一個 FastAPI 的依賴函式。
-    它會在每個 API 請求的生命週期中，建立並提供一個資料庫會話，
-    並在請求結束後（無論成功或失敗）關閉它。
-    """
     db = SessionLocal()
     try:
         yield db
