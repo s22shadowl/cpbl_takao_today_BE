@@ -13,7 +13,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db, engine
+from app.db import get_db
 from app.config import settings
 from app.logging_config import setup_logging
 from app.tasks import (
@@ -36,7 +36,9 @@ async def lifespan(app: FastAPI):
     # 【核心修正】: 將表格建立的邏輯移至此處
     # 這確保了只有在應用程式真正啟動時，才會嘗試連接資料庫並建立表格
     logger.info("正在檢查並建立資料庫表格...")
-    models.Base.metadata.create_all(bind=engine)
+    # 暫時註解掉這行，避免在啟動時進行資料庫操作
+    # logging.info("正在檢查並建立資料庫表格...")
+    # models.Base.metadata.create_all(bind=engine)
     logger.info("資料庫表格檢查完畢。")
     yield
     logger.info("應用程式正在關閉...")
