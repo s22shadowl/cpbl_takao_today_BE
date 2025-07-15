@@ -1,4 +1,4 @@
-# app/main.py (生命週期修正)
+# app/main.py
 
 import datetime
 import logging
@@ -6,6 +6,10 @@ from fastapi import FastAPI, HTTPException, Depends, Security
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from typing import List, Optional
+
+# --- 新增 ---
+# 匯入 Pydantic 的 BaseModel，用於定義請求主體
+from pydantic import BaseModel
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
@@ -60,6 +64,13 @@ async def get_api_key(api_key: str = Security(api_key_header)):
     return api_key
 
 
+# --- 新增 ---
+# 定義一個 Pydantic 模型來代表 /api/run_scraper 的請求主體
+class ScraperRequest(BaseModel):
+    mode: str
+    date: Optional[str] = None
+
+
 # --- API 端點 ---
 
 
@@ -87,7 +98,13 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/run_scraper", status_code=202, dependencies=[Depends(get_api_key)])
-def run_scraper_manually(mode: str, date: Optional[str] = None):
+# --- 修改 ---
+# 將函式參數改為接收我們定義的 Pydantic 模型
+def run_scraper_manually(request_data: ScraperRequest):
+    # 從 request_data 物件中取得 mode 和 date
+    mode = request_data.mode
+    date = request_data.date
+
     if mode not in ["daily", "monthly", "yearly"]:
         raise HTTPException(
             status_code=400,
