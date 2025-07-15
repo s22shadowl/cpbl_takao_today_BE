@@ -1,26 +1,30 @@
-# Dockerfile
-
 # 1. 使用官方的 Python 3.11 slim 版本作為基礎映像
 FROM python:3.11-slim
 
 # 2. 設定工作目錄
 WORKDIR /code
 
-# 3. 設定環境變數，讓 Python 的輸出直接顯示，不要緩衝
+# 3. 設定環境變數
 ENV PYTHONUNBUFFERED=1
 
-# 4. 複製 requirements.txt 並安裝依賴套件
-#    這樣做可以利用 Docker 的層快取，如果 requirements.txt 沒變，就不用重新安裝
+# 4. 先將 requirements.txt 複製到工作目錄中
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# --- 核心修正 ---
-# 5. 安裝 Playwright 所需的瀏覽器執行檔
-#    這個指令會讀取 requirements.txt 中的 playwright 版本，並下載對應的瀏覽器
-RUN playwright install --with-deps
+# 5. 安裝系統依賴和 Python 依賴
+RUN apt-get update && \
+    apt-get install -y xvfb && \
+    pip install --no-cache-dir -r requirements.txt && \
+    playwright install --with-deps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# 6. 將整個專案目錄（包含 app/ 子目錄）複製到工作目錄中
+# 6. 將整個專案目錄複製到工作目錄中
 COPY . .
 
-# 注意：我們不需要在這裡寫 CMD 或 ENTRYPOINT，
-# 因為 fly.toml 的 [processes] 區塊會為我們處理啟動指令。
+# --- 核心修正 ---
+# 7. 將我們自訂的啟動腳本複製進來，並賦予它執行權限
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+# 8. 將此腳本設定為容器的進入點
+ENTRYPOINT ["./entrypoint.sh"]
