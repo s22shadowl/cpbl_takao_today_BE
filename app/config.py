@@ -1,7 +1,6 @@
 # app/config.py
 
-import os
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List
 
 
@@ -18,13 +17,23 @@ class Settings(BaseSettings):
     DEFAULT_REQUEST_TIMEOUT: int = 30
     PLAYWRIGHT_TIMEOUT: int = 60000
     FRIENDLY_SCRAPING_DELAY: int = 2
+    model_config = SettingsConfigDict(
+        env_file=".env",  # 確保有這一行
+        env_file_encoding="utf-8",
+        case_sensitive=True,  # 通常建議保留，除非你的環境變數名稱不區分大小寫
+    )
 
 
-settings = Settings(
-    DATABASE_URL=os.getenv("DATABASE_URL"),
-    DRAMATIQ_BROKER_URL=os.getenv("DRAMATIQ_BROKER_URL"),
-    API_KEY=os.getenv("API_KEY"),
+print("[DEBUG]CODE")
+
+settings = Settings()
+
+print(f"[DEBUG] app/config.py: DATABASE_URL loaded: '{settings.DATABASE_URL}'")
+print(
+    f"[DEBUG] app/config.py: DRAMATIQ_BROKER_URL loaded: '{settings.DRAMATIQ_BROKER_URL}'"
 )
+print(f"[DEBUG] app/config.py: API_KEY loaded: '{settings.API_KEY}'")
+
 
 TEAM_CLUB_CODES = {
     "中信兄弟": "ACN",

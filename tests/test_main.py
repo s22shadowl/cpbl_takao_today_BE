@@ -104,9 +104,9 @@ def test_run_scraper_manually(client, mocker, mode, date_param, expected_task_st
     app.dependency_overrides[get_api_key] = override_get_api_key_success
 
     headers = {"X-API-Key": "any-key-will-do"}
-    response = client.post(
-        f"/api/run_scraper?mode={mode}&date={date_param}", headers=headers
-    )
+    # 【修正】: 將參數作為 JSON 請求主體發送
+    request_payload = {"mode": mode, "date": date_param}
+    response = client.post("/api/run_scraper", headers=headers, json=request_payload)
 
     # 【核心修正】: 測試結束後，清理掉覆寫，以免影響其他測試
     app.dependency_overrides.clear()
@@ -120,7 +120,9 @@ def test_run_scraper_manually_invalid_mode(client):
     """測試手動觸發爬蟲時使用無效模式"""
     app.dependency_overrides[get_api_key] = override_get_api_key_success
     headers = {"X-API-Key": "any-key-will-do"}
-    response = client.post("/api/run_scraper?mode=invalid_mode", headers=headers)
+    # 【修正】: 將參數作為 JSON 請求主體發送
+    request_payload = {"mode": "invalid_mode", "date": None}
+    response = client.post("/api/run_scraper", headers=headers, json=request_payload)
     app.dependency_overrides.clear()
     app.dependency_overrides[get_db] = override_get_db
 
@@ -145,7 +147,10 @@ def test_update_schedule_manually(client, mocker):
 # 測試 API 金鑰保護
 def test_post_endpoints_no_api_key(client):
     """測試在沒有提供 API 金鑰時，POST 端點應返回 403"""
-    response_run = client.post("/api/run_scraper?mode=daily")
+    # 【修正】: 因為現在需要請求主體，提供一個空的 JSON
+    response_run = client.post(
+        "/api/run_scraper", json={"mode": "daily", "date": "2025-01-01"}
+    )
     assert response_run.status_code == 403
 
     response_update = client.post("/api/update_schedule")
@@ -155,7 +160,12 @@ def test_post_endpoints_no_api_key(client):
 def test_post_endpoints_wrong_api_key(client):
     """測試在提供錯誤 API 金鑰時，POST 端點應返回 403"""
     headers = {"X-API-Key": "wrong-key"}
-    response_run = client.post("/api/run_scraper?mode=daily", headers=headers)
+    # 【修正】: 因為現在需要請求主體，提供一個空的 JSON
+    response_run = client.post(
+        "/api/run_scraper",
+        headers=headers,
+        json={"mode": "daily", "date": "2025-01-01"},
+    )
     assert response_run.status_code == 403
 
     response_update = client.post("/api/update_schedule", headers=headers)
