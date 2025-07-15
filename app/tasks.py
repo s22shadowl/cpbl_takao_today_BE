@@ -5,19 +5,45 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 from typing import Optional
 
+# --- 新增 ---
+# 匯入 urlparse 用於解析 Redis URL，以及 ssl 模組
+from urllib.parse import urlparse
+import ssl
+
 # 專案內部模組
 from app.logging_config import setup_logging
 from app.config import settings
 from app.core import schedule_scraper
-
-# 【核心修正】: 移除此處的 scheduler 匯入，以打破循環依賴
-# from app.scheduler import setup_scheduler
 from app import scraper
 
 setup_logging()
-redis_broker = RedisBroker(url=settings.DRAMATIQ_BROKER_URL)
-dramatiq.set_broker(redis_broker)
 logger = logging.getLogger(__name__)
+
+# --- 核心修正 ---
+# 手動解析 Redis URL 並明確設定連線參數，以確保 SSL 設定正確傳遞
+
+# 1. 解析從 settings 讀取到的 Redis URL
+parsed_url = urlparse(settings.DRAMATIQ_BROKER_URL)
+
+# 2. 建立一個包含 SSL 選項的字典
+#    - ssl=True: 啟用 SSL/TLS 加密 (因為 URL scheme 是 rediss://)
+#    - ssl_cert_reqs=ssl.CERT_NONE: 告知客戶端不要驗證伺服器的 SSL 憑證，
+#      這能解決在某些環境下憑證鏈不完整的連線問題。
+connection_kwargs = {
+    "ssl": True,
+    "ssl_cert_reqs": ssl.CERT_NONE,
+}
+
+# 3. 建立 RedisBroker 實例，傳入解析後的獨立參數
+redis_broker = RedisBroker(
+    host=parsed_url.hostname,
+    port=parsed_url.port,
+    password=parsed_url.password,
+    # 將我們定義的 SSL 選項作為額外參數傳遞
+    **connection_kwargs,
+)
+
+dramatiq.set_broker(redis_broker)
 
 
 # --- 任務定義 (Actors) ---
@@ -28,7 +54,6 @@ def task_update_schedule_and_reschedule():
     """
     【Dramatiq版】這是一個背景任務，負責執行完整的賽程更新與排程器重設。
     """
-    # 【核心修正】: 將 scheduler 的匯入移至函式內部
     from app.scheduler import setup_scheduler
 
     logger.info("--- Dramatiq Worker: 已接收到賽程更新任務，開始執行 ---")
