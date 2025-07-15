@@ -14,7 +14,12 @@ ENV PYTHONUNBUFFERED=1
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5. 將整個專案目錄（包含 app/ 子目錄）複製到工作目錄中
+# --- 核心修正 ---
+# 5. 安裝 Playwright 所需的瀏覽器執行檔
+#    這個指令會讀取 requirements.txt 中的 playwright 版本，並下載對應的瀏覽器
+RUN playwright install --with-deps
+
+# 6. 將整個專案目錄（包含 app/ 子目錄）複製到工作目錄中
 COPY . .
 
 # 注意：我們不需要在這裡寫 CMD 或 ENTRYPOINT，
