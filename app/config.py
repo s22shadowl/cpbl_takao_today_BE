@@ -6,8 +6,7 @@ from typing import List
 
 
 class Settings(BaseSettings):
-    # DATABASE_URL: str  # <--- 移除這一行
-
+    DATABASE_URL: str
     DRAMATIQ_BROKER_URL: str
     API_KEY: str
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
@@ -22,7 +21,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings(
-    # DATABASE_URL=os.getenv("DATABASE_URL"), # <--- 移除這一行
+    DATABASE_URL=os.getenv("DATABASE_URL"),
     DRAMATIQ_BROKER_URL=os.getenv("DRAMATIQ_BROKER_URL"),
     API_KEY=os.getenv("API_KEY"),
 )
