@@ -25,6 +25,17 @@ logger = logging.getLogger(__name__)
 # 1. 解析從 settings 讀取到的 Redis URL
 parsed_url = urlparse(settings.DRAMATIQ_BROKER_URL)
 
+# 建立一個包含 SSL 和超時選項的字典
+connection_kwargs = {
+    "ssl": True,
+    "ssl_cert_reqs": ssl.CERT_NONE,
+    # --- 新增 ---
+    # 設定連線到 Redis 的超時時間為 10 秒
+    "socket_connect_timeout": 10,
+    # 設定連線後，讀取/寫入操作的超時時間為 10 秒
+    "socket_timeout": 10,
+}
+
 # 2. 建立一個包含 SSL 選項的字典
 #    - ssl=True: 啟用 SSL/TLS 加密 (因為 URL scheme 是 rediss://)
 #    - ssl_cert_reqs=ssl.CERT_NONE: 告知客戶端不要驗證伺服器的 SSL 憑證，
@@ -39,7 +50,6 @@ redis_broker = RedisBroker(
     host=parsed_url.hostname,
     port=parsed_url.port,
     password=parsed_url.password,
-    # 將我們定義的 SSL 選項作為額外參數傳遞
     **connection_kwargs,
 )
 
