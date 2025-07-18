@@ -1,20 +1,17 @@
-# fly.toml (最終 Dockerfile 版本)
+# fly.toml
 
-# 【注意】請確認底下 app 和 primary_region 的值，
-# 與你剛剛執行 fly launch 後，終端機顯示的名稱與地區一致。
 app = 'cpbl-takao-today-be'
 primary_region = 'sin'
 
-# 告訴 Fly.io 使用我們專案中的 Dockerfile 來建置
 [build]
   dockerfile = "Dockerfile"
 
-# 定義要運行的程序
+# 原有的 [processes] 區塊保持不變
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
   worker = "dramatiq app.tasks"
 
-# 針對 web 程序的網路與健康檢查設定
+# 原有的 [[services]] 區塊是針對 web 程序的，保持不變
 [[services]]
   processes = ["web"]
   protocol = "tcp"
@@ -39,10 +36,22 @@ primary_region = 'sin'
   auto_start_machines = true
   min_machines_running = 1
 
-  # 設定健康檢查與 30 秒的啟動寬限期
   [[services.checks]]
     type = "tcp"
     port = 8080
     interval = "15s"
     timeout = "2s"
     grace_period = "30s"
+
+# --- 新增 ---
+# 專門為 worker 程序設定服務與啟停策略
+[[services]]
+  processes = ["worker"]
+  internal_port = 8081
+
+  # 允許 worker 機器在閒置時自動關閉
+  auto_stop_machines = true
+  auto_start_machines = false # 我們將手動啟動它
+
+  # 預設保持 0 台機器運行，以節省費用
+  min_machines_running = 0
