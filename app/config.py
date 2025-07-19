@@ -24,16 +24,7 @@ class Settings(BaseSettings):
     )
 
 
-print("[DEBUG]CODE")
-
 settings = Settings()
-
-print(f"[DEBUG] app/config.py: DATABASE_URL loaded: '{settings.DATABASE_URL}'")
-print(
-    f"[DEBUG] app/config.py: DRAMATIQ_BROKER_URL loaded: '{settings.DRAMATIQ_BROKER_URL}'"
-)
-print(f"[DEBUG] app/config.py: API_KEY loaded: '{settings.API_KEY}'")
-
 
 TEAM_CLUB_CODES = {
     "中信兄弟": "ACN",

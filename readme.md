@@ -11,6 +11,7 @@
 - **自動化數據抓取**: 可透過排程或手動 API 觸發，抓取全年度賽程、每日比賽結果與球員的逐打席詳細記錄。
 - **穩健的背景任務**: 使用 Dramatiq 與 Redis 任務佇列，將耗時的爬蟲工作與主應用程式分離，提升系統穩定性與回應速度。
 - **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發環境，確保從本地到生產環境的一致性。
+- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移，確保開發與生產環境的資料庫結構同步。
 - **雲端原生架構**: 部署於 Fly.io 平台，將 API 服務 (`web`) 與爬蟲任務 (`worker`) 拆分為獨立的服務實體，易於獨立擴展與管理。
 - **RESTful API**: 基於 FastAPI 框架，提供資料查詢與手動任務觸發的 API，並透過 API 金鑰進行安全驗證。
 - **自動化品質控管**: 整合 pre-commit hooks（Ruff, Black）與 GitHub Actions CI/CD 流程，自動化執行程式碼格式化、風格檢查與單元測試。
@@ -23,7 +24,7 @@
   - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有來自外部的 API 請求。
   - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門監聽並執行來自 Redis 佇列的耗時爬蟲任務。
 - **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務，作為專案的主資料來源。
-- **Upstash Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 用於任務派發與管理的訊息代理 (Message Broker)。
+- **Aiven Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 用於任務派發與管理的訊息代理 (Message Broker)。
 
 **資料流示意圖:**
 
@@ -42,7 +43,7 @@ graph TD
     end
 
     subgraph "第三方服務"
-        Broker[(Upstash Redis)]
+        Broker[(Aiven Redis)]
     end
 
     subgraph "外部網站"
@@ -62,17 +63,17 @@ graph TD
 
 ## 技術棧 (Tech Stack)
 
-| 類別                   | 技術                                          |
-| ---------------------- | --------------------------------------------- |
-| **後端框架**           | FastAPI, Uvicorn                              |
-| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), psycopg2-binary |
-| **背景任務佇列**       | Dramatiq, Redis (Upstash)                     |
-| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests          |
-| **容器化**             | Docker, Docker Compose                        |
-| **雲端平台**           | Fly.io                                        |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff, Black       |
-| **測試框架**           | pytest, pytest-mock, pytest-playwright        |
-| **設定管理**           | pydantic-settings                             |
+| 類別                   | 技術                                    |
+| ---------------------- | --------------------------------------- |
+| **後端框架**           | FastAPI, Uvicorn                        |
+| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic   |
+| **背景任務佇列**       | Dramatiq, Redis (Aiven)                 |
+| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests    |
+| **容器化**             | Docker, Docker Compose                  |
+| **雲端平台**           | Fly.io                                  |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff, Black |
+| **測試框架**           | pytest, pytest-mock, pytest-playwright  |
+| **設定管理**           | pydantic-settings                       |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -94,49 +95,40 @@ cd <PROJECT_DIRECTORY>
 ```env
 # .env
 
-# 連接到 Docker Compose 啟動的 PostgreSQL 服務
-DATABASE_URL=postgresql://myuser:mypassword@db:5432/mydb
+# 在容器環境中，主機名稱應為服務名稱 'db'
+# 但為了讓本地工具 (如 psql) 能連線，這裡仍可保留 localhost
+DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/mydb
 
-# 連接到 Docker Compose 啟動的 Redis 服務
-DRAMATIQ_BROKER_URL=redis://redis:6379/0
+# 在容器環境中，主機名稱應為服務名稱 'redis'
+DRAMATIQ_BROKER_URL=redis://localhost:6379/0
 
 # 用於保護 API 端點的密鑰，請更換為一個你自己的安全字串
 API_KEY=your_secret_api_key_here
 ```
 
-### 步驟三：啟動背景服務
+### 步驟三：啟動並初始化服務
 
-本專案依賴 PostgreSQL 和 Redis。使用 Docker Compose 可以一鍵啟動這兩個服務。
-
-```bash
-docker-compose up -d
-```
-
-此指令會根據 `docker-compose.yml` 的設定，在背景下載並啟動 `db` 和 `redis` 兩個容器。
-
-### 步驟四：運行應用程式
-
-你需要開啟兩個終端機視窗，分別用於啟動 API 伺服器和背景任務 Worker。
-
-**在第一個終端機 (運行 API 伺服器):**
+本專案使用 Docker Compose 管理所有服務。
 
 ```bash
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 首次啟動或 Dockerfile/docker-compose.yml 變更後，使用 --build
+docker compose up -d --build
 ```
 
-- 此指令會啟動 FastAPI 應用程式。`--reload` 參數會在程式碼變更時自動重啟，方便開發。
+### 步驟四：初始化資料庫 (首次設定必要)
 
-**在第二個終端機 (運行 Worker):**
+在首次啟動服務後，你需要使用 Alembic 在資料庫中建立所有必要的資料表。
 
 ```bash
-dramatiq app.tasks
+# 在 web 容器中執行 alembic upgrade 指令
+docker compose run --rm web alembic upgrade head
 ```
 
-- 此指令會啟動 Dramatiq Worker，它會持續監聽 Redis 佇列，並執行收到的任何任務。
+此指令會將資料庫結構更新到最新的版本。
 
 ## 使用方式
 
-當所有服務都成功啟動後，第一件要做的事就是將本賽季的賽程載入資料庫。
+當所有服務都成功啟動，且資料庫也已初始化後，即可開始使用。
 
 ### 首次初始化賽程
 
@@ -147,7 +139,22 @@ curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/a
 -H "X-API-Key: your_secret_api_key_here"
 ```
 
-此請求會發送一個任務到背景佇列，Worker 接收到後便會開始爬取整年度的賽程。這讓系統知道未來哪些日期有比賽需要排程處理。
+此請求會發送一個任務到背景佇列，Worker 接收到後便會開始爬取整年度的賽程。
+
+## 資料庫遷移 (Database Migrations)
+
+本專案使用 Alembic 來管理資料庫結構的變更。
+
+- **當你修改 `app/models.py` 中的模型後**，你需要產生一個新的遷移腳本：
+  ```bash
+  # 在 web 容器中自動產生遷移腳本
+  docker compose run --rm web alembic revision --autogenerate -m "描述你的變更"
+  ```
+- **將變更應用到資料庫**:
+  ```bash
+  # 在 web 容器中執行 upgrade
+  docker compose run --rm web alembic upgrade head
+  ```
 
 ## API 端點 (API Endpoints)
 
@@ -216,7 +223,7 @@ curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/a
     ```bash
     fly secrets set \
       DATABASE_URL="<YOUR_FLY_POSTGRES_URL>" \
-      DRAMATIQ_BROKER_URL="<YOUR_UPSTASH_REDIS_URL>" \
+      DRAMATIQ_BROKER_URL="<YOUR_AIVEN_REDIS_URL>" \
       API_KEY="<YOUR_PRODUCTION_API_KEY>"
     ```
 
@@ -225,5 +232,4 @@ curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/a
     ````bash
     fly deploy
     ```flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
-
     ````

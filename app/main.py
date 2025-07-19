@@ -17,7 +17,7 @@ from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from app import models
-from app.db import get_db, engine
+from app.db import get_db
 from app.config import settings
 from app.logging_config import setup_logging
 from app.tasks import (
@@ -34,10 +34,10 @@ logger = logging.getLogger(__name__)
 # --- FastAPI 應用程式設定 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    應用程式生命週期管理。
+    """
     logger.info("應用程式啟動中...")
-    logger.info("正在檢查並建立資料庫表格...")
-    models.Base.metadata.create_all(bind=engine)
-    logger.info("資料庫表格檢查完畢。")
     yield
     logger.info("應用程式正在關閉...")
 

@@ -14,17 +14,12 @@ COPY requirements.txt .
 RUN apt-get update && \
     apt-get install -y xvfb && \
     pip install --no-cache-dir -r requirements.txt && \
-    playwright install --with-deps && \
+    # 只安裝 Chromium 瀏覽器核心，以大幅縮小映像檔體積。
+    playwright install chromium --with-deps && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # 6. 將整個專案目錄複製到工作目錄中
 COPY . .
 
-# --- 核心修正 ---
-# 7. 將我們自訂的啟動腳本複製進來，並賦予它執行權限
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
-
-# 8. 將此腳本設定為容器的進入點
-ENTRYPOINT ["./entrypoint.sh"]
+# 注意：ENTRYPOINT 和 CMD 將在 docker-compose.yml 中定義
