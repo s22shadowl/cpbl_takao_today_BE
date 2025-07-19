@@ -5,18 +5,18 @@ import dramatiq
 from dramatiq.brokers.redis import RedisBroker
 from typing import Optional
 
-# --- 新增 ---
-# 匯入 urlparse 用於解析 Redis URL，以及 ssl 模組
 from urllib.parse import urlparse
 import ssl
 
 # 專案內部模組
-from app.logging_config import setup_logging
+# 不再需要從這裡呼叫 setup_logging
 from app.config import settings
 from app.core import schedule_scraper
 from app import scraper
 
-setup_logging()
+# **核心修正**: 移除在模組頂層的 setup_logging() 呼叫
+# setup_logging()
+
 logger = logging.getLogger(__name__)
 
 # --- 核心修正 ---

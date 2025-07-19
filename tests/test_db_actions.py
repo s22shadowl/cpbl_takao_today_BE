@@ -1,48 +1,19 @@
-# tests/core/test_db_actions.py
-
-import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+# tests/test_db_actions.py
 
 # 導入我們要測試的資料庫操作函式和 ORM 模型
 from app import db_actions, models
-from app.db import Base
 
 # --- Fixtures ---
-
-
-@pytest.fixture(scope="function")
-def test_db_session():
-    """
-    一個 fixture，它會為每個測試函式建立一個獨立的、
-    在記憶體中運行的 SQLite 資料庫會話。
-    """
-    # 建立一個記憶體內的 SQLite 資料庫引擎
-    engine = create_engine("sqlite:///:memory:")
-    # 根據我們的模型建立所有表格
-    Base.metadata.create_all(engine)
-    # 建立一個 Session 工廠
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-    # 建立一個會話
-    db = TestingSessionLocal()
-
-    try:
-        # 將會話提供給測試函式
-        yield db
-    finally:
-        # 測試結束後關閉會話
-        db.close()
-        # 刪除所有表格，確保下一個測試是乾淨的
-        Base.metadata.drop_all(engine)
+# 此處的 test_db_session fixture 已被移除，它現在由 tests/conftest.py 全域提供
 
 
 # --- 測試案例 ---
 
 
-def test_store_game_and_get_id(test_db_session):
+# 函式簽章從 (test_db_session) 改為 (db_session)
+def test_store_game_and_get_id(db_session):
     """測試 store_game_and_get_id 函式"""
-    db = test_db_session
+    db = db_session
 
     game_info = {
         "cpbl_game_id": "TEST01",
@@ -71,9 +42,10 @@ def test_store_game_and_get_id(test_db_session):
     assert count == 1
 
 
-def test_update_player_season_stats(test_db_session):
+# 函式簽章從 (test_db_session) 改為 (db_session)
+def test_update_player_season_stats(db_session):
     """測試 update_player_season_stats 函式"""
-    db = test_db_session
+    db = db_session
 
     stats_list = [
         {"player_name": "測試員A", "team_name": "測試隊", "avg": 0.300},
@@ -105,9 +77,10 @@ def test_update_player_season_stats(test_db_session):
     assert count == 2
 
 
-def test_store_player_game_data_with_details(test_db_session):
+# 函式簽章從 (test_db_session) 改為 (db_session)
+def test_store_player_game_data_with_details(db_session):
     """測試 store_player_game_data 函式，包含詳細打席資訊"""
-    db = test_db_session
+    db = db_session
 
     game_info = {
         "cpbl_game_id": "TEST02",
@@ -147,9 +120,10 @@ def test_store_player_game_data_with_details(test_db_session):
     assert details[1].inning == 3
 
 
-def test_update_and_get_game_schedules(test_db_session):
+# 函式簽章從 (test_db_session) 改為 (db_session)
+def test_update_and_get_game_schedules(db_session):
     """測試 update_game_schedules 和 get_all_schedules 函式"""
-    db = test_db_session
+    db = db_session
 
     initial_schedules = [
         {

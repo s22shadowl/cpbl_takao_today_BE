@@ -1,15 +1,13 @@
 # app/logging_config.py
 
 import logging.config
-import os
+from pathlib import Path
 
-# 建立 logs 資料夾 (如果不存在)
-# 使用 os.path.dirname(__file__) 來確保路徑相對於目前檔案，更為穩健
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
-if not os.path.exists(LOG_DIR):
-    os.makedirs(LOG_DIR)
+# 使用 pathlib 定義基礎路徑與日誌目錄
+BASE_DIR = Path(__file__).parent.parent
+LOG_DIR = BASE_DIR / "logs"
 
-# 使用字典來定義日誌設定，更具彈性
+# 定義日誌設定字典
 LOGGING_CONFIG = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -29,13 +27,12 @@ LOGGING_CONFIG = {
             "level": "INFO",
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "standard",
-            "filename": os.path.join(LOG_DIR, "app.log"),
+            "filename": LOG_DIR / "app.log",
             "maxBytes": 1024 * 1024 * 5,  # 5 MB
             "backupCount": 3,
             "encoding": "utf-8",
         },
     },
-    # root logger 會捕捉所有未被特別指定的 logger 的日誌
     "root": {
         "handlers": ["console", "file"],
         "level": "INFO",
@@ -44,5 +41,9 @@ LOGGING_CONFIG = {
 
 
 def setup_logging():
-    """套用全域日誌設定"""
+    """
+    套用全域日誌設定。
+    在套用設定前，會先確保日誌目錄存在。
+    """
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     logging.config.dictConfig(LOGGING_CONFIG)

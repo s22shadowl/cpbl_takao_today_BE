@@ -7,18 +7,16 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
-# --- 新增 ---
-# 匯入 Pydantic 的 BaseModel，用於定義請求主體
 from pydantic import BaseModel
-
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
-
 from sqlalchemy.orm import Session
 
 from app import models
 from app.db import get_db
 from app.config import settings
+
+# **核心修正**: 在 main.py 中匯入 setup_logging
 from app.logging_config import setup_logging
 from app.tasks import (
     task_update_schedule_and_reschedule,
@@ -27,7 +25,6 @@ from app.tasks import (
     task_scrape_entire_year,
 )
 
-setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +34,8 @@ async def lifespan(app: FastAPI):
     """
     應用程式生命週期管理。
     """
+    # **核心修正**: 在應用程式啟動時，呼叫 setup_logging
+    setup_logging()
     logger.info("應用程式啟動中...")
     yield
     logger.info("應用程式正在關閉...")
