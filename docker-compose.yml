@@ -3,61 +3,48 @@ services:
     image: postgres:15
     restart: always
     environment:
-      - POSTGRES_USER=myuser
-      - POSTGRES_PASSWORD=mypassword
-      - POSTGRES_DB=mydb
-    ports:
-      - "5432:5432"
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data/
+    ports:
+      - "127.0.0.1:5432:5432"
 
   redis:
     image: redis:7-alpine
     restart: always
     ports:
       - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-  # --- 最終架構 ---
-  # 將應用程式拆分為 web 和 worker 兩個服務，
-  # 就像在 Fly.io 生產環境中一樣。
-  # 這樣可以徹底繞過 entrypoint.sh 的權限問題。
 
   web:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/code
     ports:
       - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+      - DRAMATIQ_BROKER_URL=redis://redis:6379/0
+      - API_KEY=${API_KEY}
     depends_on:
       - db
       - redis
-    env_file:
-      - .env
-    # --- 修正 ---
-    # 在容器環境中，明確覆寫 DATABASE_URL，
-    # 使用服務名稱 'db' 作為主機名稱，而不是 'localhost'。
-    environment:
-      - DATABASE_URL=postgresql://myuser:mypassword@db:5432/mydb
-    volumes:
-      - .:/code
 
   worker:
     build: .
-    # 在 worker 服務中直接啟動虛擬螢幕和 dramatiq
-    command: sh -c "Xvfb :99 -screen 0 1024x768x16 & export DISPLAY=:99 && dramatiq app.tasks"
+    # **最終修正**: 使用我們已驗證成功的、包含 PYTHONPATH 的啟動指令
+    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.tasks:redis_broker app.tasks"
+    volumes:
+      - .:/code
+    environment:
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+      - DRAMATIQ_BROKER_URL=redis://redis:6379/0
+      - E2E_TESTING=true
     depends_on:
       - db
       - redis
-    env_file:
-      - .env
-    # --- 修正 ---
-    # 同樣為 worker 服務覆寫 DATABASE_URL。
-    environment:
-      - DATABASE_URL=postgresql://myuser:mypassword@db:5432/mydb
-    volumes:
-      - .:/code
 
 volumes:
   postgres_data:
-  redis_data:

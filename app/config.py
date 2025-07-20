@@ -5,10 +5,20 @@ from typing import List
 
 
 class Settings(BaseSettings):
+    # **新增**: 從 .env 讀取並驗證 PostgreSQL 的獨立設定變數
+    # 這些變數主要由 docker-compose.yml 使用
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_DB: str
+    POSTGRES_PORT: int
+
+    # 應用程式主要使用的設定
     DATABASE_URL: str
     DRAMATIQ_BROKER_URL: str
     API_KEY: str
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    # 其他應用程式設定
+    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://12-7.0.0.1:3000"]
     TARGET_TEAM_NAME: str = "台鋼雄鷹"
     TARGET_PLAYER_NAMES: List[str] = ["王柏融", "魔鷹", "吳念庭"]
     BASE_URL: str = "https://www.cpbl.com.tw"
@@ -17,10 +27,11 @@ class Settings(BaseSettings):
     DEFAULT_REQUEST_TIMEOUT: int = 30
     PLAYWRIGHT_TIMEOUT: int = 60000
     FRIENDLY_SCRAPING_DELAY: int = 2
+
     model_config = SettingsConfigDict(
-        env_file=".env",  # 確保有這一行
+        env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=True,  # 通常建議保留，除非你的環境變數名稱不區分大小寫
+        case_sensitive=True,
     )
 
 

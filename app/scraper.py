@@ -5,6 +5,8 @@ import time
 import logging
 from playwright.sync_api import sync_playwright, expect
 import re
+import os  # **新增**: 匯入 os 模組以讀取環境變數
+
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 # 專案內部模組導入
@@ -247,6 +249,44 @@ def _process_filtered_games(games_to_process):
 # --- 主功能函式 ---
 def scrape_single_day(specific_date=None):
     """【功能一】專門抓取並處理指定單日的比賽數據。"""
+    # **新增**: 檢查是否處於 E2E 測試模式
+    if os.getenv("E2E_TESTING") == "true":
+        logger.info(
+            f"--- [E2E] 偵測到 E2E_TESTING=true，為日期 {specific_date} 執行模擬資料庫寫入 ---"
+        )
+        db = SessionLocal()
+        try:
+            # 建立模擬的比賽資訊
+            game_info = {
+                "cpbl_game_id": f"E2E_{specific_date.replace('-', '')}",
+                "game_date": specific_date,
+                "home_team": "E2E測試主隊",
+                "away_team": "E2E測試客隊",
+                "status": "已完成",
+            }
+            game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
+
+            # 如果比賽成功儲存，則建立並儲存模擬的球員數據
+            if game_id_in_db:
+                player_records = [
+                    {
+                        "summary": {"player_name": "E2E測試員", "team_name": "測試隊"},
+                        "at_bats_details": [{"inning": 1, "result_short": "E2E-安打"}],
+                    }
+                ]
+                db_actions.store_player_game_data(db, game_id_in_db, player_records)
+
+            db.commit()
+            logger.info(f"--- [E2E] 已成功寫入日期 {specific_date} 的模擬資料 ---")
+        except Exception as e:
+            logger.error(f"[E2E] 寫入模擬資料時發生錯誤: {e}", exc_info=True)
+            db.rollback()
+        finally:
+            if db:
+                db.close()
+        # 結束函式，不執行後續的真實爬蟲邏輯
+        return
+
     today = datetime.date.today()
     target_date_str = specific_date if specific_date else today.strftime("%Y-%m-%d")
     logger.info(f"--- 開始執行 [單日模式]，目標日期: {target_date_str} ---")
