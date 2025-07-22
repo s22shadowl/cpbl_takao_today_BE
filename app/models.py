@@ -13,7 +13,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
 import datetime
 
 from .db import Base  # 從我們新的 db.py 匯入 Base
@@ -181,6 +181,21 @@ class PlayerSeasonStatsDB(Base):
 # ==============================================================================
 
 
+# 【新增】AtBatDetail 的 Pydantic 模型
+class AtBatDetail(BaseModel):
+    id: int
+    inning: Optional[int] = None
+    sequence_in_game: Optional[int] = None
+    result_short: Optional[str] = None
+    result_description_full: Optional[str] = None
+    opposing_pitcher_name: Optional[str] = None
+    pitch_sequence_details: Optional[str] = None
+    runners_on_base_before: Optional[str] = None
+    outs_before: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class PlayerGameSummary(BaseModel):
     id: int
     game_id: int
@@ -210,6 +225,9 @@ class PlayerGameSummary(BaseModel):
     at_bat_results_summary: Optional[str] = None
     created_at: datetime.datetime
 
+    # 【修改】加入關聯的 at_bat_details 列表
+    at_bat_details: List[AtBatDetail] = []
+
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -226,6 +244,11 @@ class GameResult(BaseModel):
     status: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# 【新增】一個更豐富的 GameResult 模型，用於需要完整細節的 API 回應
+class GameResultWithDetails(GameResult):
+    player_summaries: List[PlayerGameSummary] = []
 
 
 class Message(BaseModel):
