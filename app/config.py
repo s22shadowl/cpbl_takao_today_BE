@@ -1,16 +1,16 @@
 # app/config.py
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
     # **新增**: 從 .env 讀取並驗證 PostgreSQL 的獨立設定變數
     # 這些變數主要由 docker-compose.yml 使用
-    POSTGRES_USER: str
-    POSTGRES_PASSWORD: str
-    POSTGRES_DB: str
-    POSTGRES_PORT: int
+    POSTGRES_USER: Optional[str] = None
+    POSTGRES_PASSWORD: Optional[str] = None
+    POSTGRES_DB: Optional[str] = None
+    POSTGRES_PORT: Optional[int] = None
 
     # 應用程式主要使用的設定
     DATABASE_URL: str
@@ -33,6 +33,9 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
     )
+
+    # 【新增】E2E 測試模式開關
+    E2E_TEST_MODE: bool = False
 
 
 settings = Settings()

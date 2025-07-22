@@ -12,27 +12,21 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    # 【新】: 定義此工作需要的服務容器
     services:
-      # PostgreSQL 服務
       postgres:
         image: postgres:15
-        # 設定健康檢查，確保資料庫已準備好接受連線
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-        # 設定資料庫的環境變數，使其與我們的 .env 檔案一致
         env:
           POSTGRES_USER: myuser
           POSTGRES_PASSWORD: mypassword
           POSTGRES_DB: mydb
         ports:
-          # 將容器的 5432 port 映射到主機的 5432 port
           - 5432:5432
 
-      # Redis 服務
       redis:
         image: redis:7-alpine
         options: >-
@@ -52,27 +46,74 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install system dependencies for Playwright
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff black pytest
+          pip install ruff black pytest requests
 
       - name: Install Playwright Browsers
         run: |
-          playwright install --with-deps
+          playwright install chromium --with-deps
 
       - name: Lint and Format Check
         run: |
           ruff check .
           black --check .
 
-      - name: Run Pytest
-        # 【新】: 為測試步驟設定環境變數
-        # 讓我們的應用程式知道如何在 CI 環境中連接到服務容器
+      - name: Run Unit and Integration Tests
         env:
           DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
           DRAMATIQ_BROKER_URL: redis://localhost:6379/0
           API_KEY: test-ci-key
         run: |
-          pytest
+          # 執行除了 e2e 目錄以外的所有測試
+          pytest --ignore=tests/e2e
+
+      - name: Run E2E Tests
+        env:
+          DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
+          DRAMATIQ_BROKER_URL: redis://localhost:6379/0
+          API_KEY: test-ci-key
+          PORT: 8000
+          # 僅在此步驟啟用 E2E 測試模式
+          E2E_TEST_MODE: "true"
+        run: |
+          # 啟動 Web 服務
+          echo "Starting Web server..."
+          uvicorn app.main:app --host 0.0.0.0 --port $PORT > web.log 2>&1 &
+          # 等待 Web 服務就緒
+          python - <<'EOF'
+          import os, time, requests
+          port = os.getenv("PORT", "8000")
+          url = f"http://localhost:{port}/docs"
+          for i in range(20):
+              try:
+                  if requests.get(url).status_code == 200:
+                      print("Web Server is up!")
+                      exit(0)
+              except requests.ConnectionError: pass
+              print(f"Waiting for Web server... ({i+1}/20)")
+              time.sleep(1)
+          print("Web Server did not start in time."); exit(1)
+          EOF
+
+          # 【修改】使用 xvfb-run 啟動 Worker 服務
+          echo "Starting Worker service with xvfb..."
+          xvfb-run dramatiq app.tasks:redis_broker app.tasks --processes 2 > worker.log 2>&1 &
+          sleep 5
+          echo "Worker service started."
+
+          # 僅執行 e2e 目錄下的測試
+          pytest tests/e2e
+
+      - name: Display logs on failure
+        if: failure()
+        run: |
+          echo "--- Web Server Logs ---"
+          cat web.log || echo "web.log not found"
+          echo "\n--- Worker Logs ---"
+          cat worker.log || echo "worker.log not found"

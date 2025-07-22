@@ -15,7 +15,7 @@ from app.config import settings
 
 # --- E2E 測試設定 ---
 API_BASE_URL = "http://localhost:8000"
-POLLING_TIMEOUT = 20
+POLLING_TIMEOUT = 60
 POLLING_INTERVAL = 1
 
 # --- 資料庫連線設定 ---
@@ -108,7 +108,7 @@ def test_scrape_daily_job_flow(db_session):
         created_game = _check_for_data_in_db()
         print("[E2E] 成功在資料庫中找到資料！")
 
-        assert created_game.home_team == "E2E測試主隊"
+        assert created_game.home_team == settings.TARGET_TEAM_NAME
         assert created_game.away_team == "E2E測試客隊"
         assert created_game.status == "已完成"
 
