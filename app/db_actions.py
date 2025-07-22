@@ -5,9 +5,7 @@ import datetime
 from typing import List, Dict, Any
 
 # SQLAlchemy 的 Session，用於型別提示
-from sqlalchemy.orm import Session
-
-# 【新】匯入 inspect，用於獲取模型的欄位資訊
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.inspection import inspect
 
 # 匯入我們定義的 SQLAlchemy 模型
@@ -213,3 +211,28 @@ def get_all_schedules(db: Session) -> List[models.GameSchedule]:
     except Exception as e:
         logging.error(f"獲取比賽排程時發生錯誤: {e}", exc_info=True)
         return []
+
+
+def get_game_with_details(db: Session, game_id: int) -> models.GameResultDB | None:
+    """
+    使用 joinedload 預先載入關聯資料，獲取單場比賽的完整細節。
+    這會透過一個 SQL JOIN 查詢，一次性取得比賽、所有球員的表現摘要，
+    以及每個球員的所有逐打席紀錄。
+    """
+    try:
+        game = (
+            db.query(models.GameResultDB)
+            .options(
+                joinedload(models.GameResultDB.player_summaries).options(
+                    joinedload(models.PlayerGameSummaryDB.at_bat_details)
+                )
+            )
+            .filter(models.GameResultDB.id == game_id)
+            .first()
+        )
+        return game
+    except Exception as e:
+        logging.error(
+            f"獲取比賽詳細資料時發生錯誤 (game_id: {game_id}): {e}", exc_info=True
+        )
+        return None
