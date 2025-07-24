@@ -8,7 +8,6 @@ import re
 
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
-# 專案內部模組導入
 from app.config import settings, TEAM_CLUB_CODES
 from app.core import fetcher
 from app.core import parser as html_parser
@@ -47,7 +46,8 @@ def scrape_and_store_season_stats():
 
     db = SessionLocal()
     try:
-        db_actions.update_player_season_stats(db, season_stats_list)
+        # 【修改】呼叫新的函式，以同時儲存最新數據與歷史紀錄
+        db_actions.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
     except Exception as e:
         logger.error(f"儲存球季累積數據時發生錯誤，交易已復原: {e}", exc_info=True)
@@ -65,12 +65,10 @@ def _process_filtered_games(games_to_process):
         return
     logger.info(f"準備處理 {len(games_to_process)} 場比賽...")
 
-    # 【新增】為 E2E 測試建立一個獨立、簡化的處理路徑，完全繞過 Playwright
     if settings.E2E_TEST_MODE:
         db = SessionLocal()
         try:
             for game_info in games_to_process:
-                # 在 E2E 模式下，我們只關心資料是否能成功寫入
                 if settings.TARGET_TEAM_NAME not in [
                     game_info.get("home_team"),
                     game_info.get("away_team"),
@@ -87,13 +85,10 @@ def _process_filtered_games(games_to_process):
                     )
                     continue
 
-                # 為了讓測試更完整，我們也儲存一些假的球員數據
                 fake_player_data = [
                     {
                         "summary": {
-                            "player_name": settings.TARGET_PLAYER_NAMES[
-                                0
-                            ],  # 使用設定中的第一個目標球員
+                            "player_name": settings.TARGET_PLAYER_NAMES[0],
                             "team_name": settings.TARGET_TEAM_NAME,
                             "batting_order": "1",
                             "position": "CF",
@@ -117,9 +112,8 @@ def _process_filtered_games(games_to_process):
         finally:
             if db:
                 db.close()
-        return  # E2E 模式下，到此結束
+        return  # == E2E 程式碼到此結束 ==
 
-    # --- 以下為原始的、用於真實爬蟲的邏輯 ---
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
@@ -312,7 +306,7 @@ def scrape_single_day(specific_date=None):
         logger.error(f"日期格式錯誤: {target_date_str}")
         return
 
-    if target_date_obj > today:
+    if target_date_obj > today and not settings.E2E_TEST_MODE:
         logger.warning(f"目標日期 {target_date_str} 是未來日期，任務中止。")
         return
 

@@ -7,13 +7,43 @@ import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
 from app.config import settings
+from app.models import AtBatResultType  # 【新增】匯入 Enum
+
+
+def _determine_result_details(description: str) -> dict:
+    """
+    【新增】根據打席的文字描述，解析出結構化的結果類型和得分。
+    """
+    result = {
+        "result_type": AtBatResultType.UNSPECIFIED,
+        "runs_scored_on_play": 0,
+    }
+
+    # 判斷得分
+    score_match = re.search(r"得(\d+)分", description)
+    if score_match:
+        result["runs_scored_on_play"] = int(score_match.group(1))
+
+    # 判斷結果類型 (順序很重要，優先匹配更精確的關鍵字)
+    if "犧牲" in description:
+        result["result_type"] = AtBatResultType.SACRIFICE
+    elif "野手選擇" in description:
+        result["result_type"] = AtBatResultType.FIELDERS_CHOICE
+    elif "失誤" in description:
+        result["result_type"] = AtBatResultType.ERROR
+    # 【修改】將「全壘打」加入上壘事件的判斷關鍵字中
+    elif any(k in description for k in ["安打", "保送", "四壞", "觸身", "全壘打"]):
+        result["result_type"] = AtBatResultType.ON_BASE
+    elif any(k in description for k in ["三振", "出局", "雙殺", "封殺"]):
+        result["result_type"] = AtBatResultType.OUT
+
+    return result
 
 
 def parse_schedule_page(html_content, year):
     """
     從賽程頁面的 HTML 中，解析出該月份「所有」的比賽基本資訊。
     """
-    # 【新增】在 E2E 模式下，返回一個符合測試預期的假比賽資料
     if settings.E2E_TEST_MODE:
         logging.info("E2E 模式啟用：正在產生假的比賽資料...")
         return [
@@ -30,6 +60,7 @@ def parse_schedule_page(html_content, year):
                 "box_score_url": "http://fake-url.com/box",
             }
         ]
+
     if not html_content:
         logging.warning("傳入的賽程頁面 HTML 內容為空，無法進行解析。")
         return []
@@ -53,7 +84,6 @@ def parse_schedule_page(html_content, year):
 
     for row in all_rows:
         try:
-            # 處理 rowspan，日期儲存格只在每天的第一個比賽列出現
             date_cell = row.find("td", class_="date")
             if date_cell:
                 date_text = date_cell.text.strip().split("(")[0]
@@ -288,7 +318,7 @@ def parse_box_score_page(html_content):
 
 
 def parse_active_inning_details(inning_html_content, inning):
-    """【全新】從單一局數的 HTML 內容中，解析出所有事件。"""
+    """從單一局數的 HTML 內容中，解析出所有事件。"""
     if not inning_html_content:
         return []
     soup = BeautifulSoup(inning_html_content, "lxml")
@@ -301,6 +331,9 @@ def parse_active_inning_details(inning_html_content, inning):
             if "no-pitch-action-remind" in item.get("class", []):
                 event_data["type"] = "no_pitch_action"
                 event_data["description"] = item.text.strip()
+                # 非打席事件，跳過後續處理
+                # continue
+                # 雖然可以跳過，但為了保持列表完整性，暫時不跳過，未來可擴充
             elif "play" in item.get("class", []):
                 event_data["type"] = "at_bat"
                 hitter_name_tag = item.select_one("div.player > a > span")
@@ -321,7 +354,13 @@ def parse_active_inning_details(inning_html_content, inning):
                     description_text,
                 ).strip()
 
+                result_details = _determine_result_details(
+                    event_data["result_description_full"]
+                )
+                event_data.update(result_details)
+
                 pitch_detail_block = item.find("div", class_="detail")
+                # 【修改】無論有無 detail block，都繼續處理
                 if pitch_detail_block:
                     pitcher_name_tag = pitch_detail_block.select_one(
                         "div.detail_item.pitcher a"
@@ -362,8 +401,8 @@ def parse_active_inning_details(inning_html_content, inning):
                         event_data["pitch_sequence_details"] = json.dumps(
                             pitch_list, ensure_ascii=False
                         )
-                else:
-                    continue
+
+                # 將有效的 at_bat 事件加入列表
                 inning_events.append(event_data)
         except Exception as e:
             logging.error(f"解析單一打席事件時出錯: {e}", exc_info=True)

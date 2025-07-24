@@ -4,11 +4,9 @@ import logging
 import datetime
 from typing import List, Dict, Any
 
-# SQLAlchemy 的 Session，用於型別提示
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.inspection import inspect
 
-# 匯入我們定義的 SQLAlchemy 模型
 from . import models
 
 
@@ -30,7 +28,6 @@ def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
         )
 
         if existing_game:
-            # 如果已存在，直接返回 ID，不需要再次 flush
             return existing_game.id
         else:
             game_data_for_db = {
@@ -48,28 +45,31 @@ def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
             }
             new_game = models.GameResultDB(**game_data_for_db)
             db.add(new_game)
-            # 【核心修正】: 使用 flush 將變更送到 DB 以取得 ID，但不 commit 交易
             db.flush()
             logging.info(f"準備新增比賽結果到資料庫: {new_game.cpbl_game_id}")
             return new_game.id
 
     except Exception as e:
         logging.error(f"準備儲存比賽結果時出錯: {e}", exc_info=True)
-        # 【核心修正】: 移除 rollback，讓上層呼叫者決定如何處理交易
-        raise  # 向上拋出異常，讓上層處理
+        raise
 
 
-def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, Any]]):
+def store_player_season_stats_and_history(
+    db: Session, season_stats_list: List[Dict[str, Any]]
+):
     """
-    【ORM版】準備多位球員的球季累積數據以供更新。
+    【修改】儲存最新的球員球季數據，並同時在歷史紀錄表中新增一筆快照。
     """
     if not season_stats_list:
         return
 
-    logging.info(f"準備批次更新 {len(season_stats_list)} 位球員的球季累積數據...")
+    logging.info(
+        f"準備批次更新 {len(season_stats_list)} 位球員的球季累積數據，並寫入歷史紀錄..."
+    )
     player_names_to_update = [stats["player_name"] for stats in season_stats_list]
 
     try:
+        # 1. 更新 PlayerSeasonStatsDB (覆蓋式)
         db.query(models.PlayerSeasonStatsDB).filter(
             models.PlayerSeasonStatsDB.player_name.in_(player_names_to_update)
         ).delete(synchronize_session=False)
@@ -78,9 +78,22 @@ def update_player_season_stats(db: Session, season_stats_list: List[Dict[str, An
         for stats in season_stats_list:
             stats["data_retrieved_date"] = datetime.date.today().strftime("%Y-%m-%d")
             new_stats_objects.append(models.PlayerSeasonStatsDB(**stats))
-
         db.add_all(new_stats_objects)
-        logging.info(f"已準備 {len(new_stats_objects)} 筆球員球季數據待提交。")
+
+        # 2. 新增至 PlayerSeasonStatsHistoryDB (日誌式)
+        history_stats_objects = []
+        for stats in season_stats_list:
+            # 移除 'updated_at' 欄位，因為 history 表沒有這個欄位
+            stats_copy = stats.copy()
+            stats_copy.pop("updated_at", None)
+            history_stats_objects.append(
+                models.PlayerSeasonStatsHistoryDB(**stats_copy)
+            )
+        db.add_all(history_stats_objects)
+
+        logging.info(
+            f"已準備 {len(new_stats_objects)} 筆球員球季數據與 {len(history_stats_objects)} 筆歷史數據待提交。"
+        )
     except Exception as e:
         logging.error(f"準備更新球員球季數據時出錯: {e}", exc_info=True)
         raise
@@ -216,8 +229,6 @@ def get_all_schedules(db: Session) -> List[models.GameSchedule]:
 def get_game_with_details(db: Session, game_id: int) -> models.GameResultDB | None:
     """
     使用 joinedload 預先載入關聯資料，獲取單場比賽的完整細節。
-    這會透過一個 SQL JOIN 查詢，一次性取得比賽、所有球員的表現摘要，
-    以及每個球員的所有逐打席紀錄。
     """
     try:
         game = (
