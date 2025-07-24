@@ -9,18 +9,33 @@ from sqlalchemy import (
     REAL,
     ForeignKey,
     UniqueConstraint,
+    Enum,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from pydantic import BaseModel, ConfigDict
 from typing import Optional, List
 import datetime
+import enum
 
-from .db import Base  # 從我們新的 db.py 匯入 Base
+from .db import Base
+
+# ==============================================================================
+# 0. Enums (列舉定義)
+# ==============================================================================
+
+
+class AtBatResultType(enum.Enum):
+    UNSPECIFIED = "UNSPECIFIED"
+    ON_BASE = "ON_BASE"  # 安打、保送、觸身
+    OUT = "OUT"  # 三振、飛球、滾地出局
+    SACRIFICE = "SACRIFICE"  # 犧牲打
+    FIELDERS_CHOICE = "FIELDERS_CHOICE"  # 野手選擇
+    ERROR = "ERROR"  # 因失誤上壘
+
 
 # ==============================================================================
 # 1. SQLAlchemy ORM Models (資料庫表格定義)
-#    這些類別定義了資料庫中的表格結構
 # ==============================================================================
 
 
@@ -56,7 +71,6 @@ class GameResultDB(Base):
     attendance = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # 關聯到 player_game_summary
     player_summaries = relationship("PlayerGameSummaryDB", back_populates="game")
 
     __table_args__ = (
@@ -125,6 +139,9 @@ class AtBatDetailDB(Base):
     outs_before = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+    runs_scored_on_play = Column(Integer, default=0)
+    result_type = Column(Enum(AtBatResultType), nullable=True, index=True)
+
     player_summary = relationship(
         "PlayerGameSummaryDB", back_populates="at_bat_details"
     )
@@ -136,11 +153,7 @@ class AtBatDetailDB(Base):
     )
 
 
-class PlayerSeasonStatsDB(Base):
-    __tablename__ = "player_season_stats"
-
-    id = Column(Integer, primary_key=True, index=True)
-    player_name = Column(String, unique=True, nullable=False, index=True)
+class PlayerSeasonStatsMixin:
     team_name = Column(String)
     data_retrieved_date = Column(String)
     games_played = Column(Integer, default=0)
@@ -172,16 +185,29 @@ class PlayerSeasonStatsDB(Base):
     go_ao_ratio = Column(REAL)
     sb_percentage = Column(REAL)
     silver_slugger_index = Column(REAL)
+
+
+class PlayerSeasonStatsDB(Base, PlayerSeasonStatsMixin):
+    __tablename__ = "player_season_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_name = Column(String, unique=True, nullable=False, index=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class PlayerSeasonStatsHistoryDB(Base, PlayerSeasonStatsMixin):
+    __tablename__ = "player_season_stats_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_name = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 # ==============================================================================
 # 2. Pydantic Models (API 資料驗證模型)
-#    這些類別定義了 API 請求和回應的資料格式
 # ==============================================================================
 
 
-# 【新增】AtBatDetail 的 Pydantic 模型
 class AtBatDetail(BaseModel):
     id: int
     inning: Optional[int] = None
@@ -192,6 +218,8 @@ class AtBatDetail(BaseModel):
     pitch_sequence_details: Optional[str] = None
     runners_on_base_before: Optional[str] = None
     outs_before: Optional[int] = None
+    runs_scored_on_play: int
+    result_type: Optional[AtBatResultType] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -225,7 +253,6 @@ class PlayerGameSummary(BaseModel):
     at_bat_results_summary: Optional[str] = None
     created_at: datetime.datetime
 
-    # 【修改】加入關聯的 at_bat_details 列表
     at_bat_details: List[AtBatDetail] = []
 
     model_config = ConfigDict(from_attributes=True)
@@ -246,7 +273,6 @@ class GameResult(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
-# 【新增】一個更豐富的 GameResult 模型，用於需要完整細節的 API 回應
 class GameResultWithDetails(GameResult):
     player_summaries: List[PlayerGameSummary] = []
 
@@ -255,8 +281,8 @@ class Message(BaseModel):
     message: str
 
 
-class PlayerSeasonStats(BaseModel):
-    id: int
+# 【新增】建立 Pydantic 基礎模型以共享球季數據欄位
+class PlayerSeasonStatsBase(BaseModel):
     player_name: str
     team_name: Optional[str] = None
     data_retrieved_date: Optional[str] = None
@@ -289,6 +315,19 @@ class PlayerSeasonStats(BaseModel):
     go_ao_ratio: Optional[float] = None
     sb_percentage: Optional[float] = None
     silver_slugger_index: Optional[float] = None
+
+
+# 【修改】讓 PlayerSeasonStats 繼承自基礎模型
+class PlayerSeasonStats(PlayerSeasonStatsBase):
+    id: int
     updated_at: Optional[datetime.datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# 【新增】為歷史紀錄表建立對應的 Pydantic 模型
+class PlayerSeasonStatsHistory(PlayerSeasonStatsBase):
+    id: int
+    created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)
