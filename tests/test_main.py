@@ -2,8 +2,8 @@
 
 import pytest
 import datetime
-from fastapi.testclient import TestClient
 from unittest.mock import patch
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app, get_api_key
@@ -323,6 +323,64 @@ def test_get_position_records(client: TestClient, db_session: Session):
     data = response.json()
     assert len(data) == 1
     assert data[0]["player_name"] == "球員SS"
+
+
+def test_get_next_at_bats_after_ibb(client: TestClient, db_session: Session):
+    """【修改】測試查詢故意四壞後下一打席結果的 API 端點，並修正斷言邏輯"""
+    game = models.GameResultDB(
+        cpbl_game_id="G_IBB",
+        game_date=datetime.date(2025, 8, 10),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    s_A = models.PlayerGameSummaryDB(game_id=game.id, player_name="球員A")
+    s_B = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="球員B"
+    )  # 被 IBB 的目標
+    s_C = models.PlayerGameSummaryDB(game_id=game.id, player_name="球員C")  # 下一棒
+    db_session.add_all([s_A, s_B, s_C])
+    db_session.flush()
+
+    ab1 = models.AtBatDetailDB(
+        player_game_summary_id=s_A.id, inning=1, result_short="一安"
+    )
+    ab2_ibb = models.AtBatDetailDB(
+        player_game_summary_id=s_B.id, inning=1, result_description_full="故意四壞"
+    )
+    ab3_next = models.AtBatDetailDB(
+        player_game_summary_id=s_C.id, inning=1, result_short="三振"
+    )
+    ab4_new_inning = models.AtBatDetailDB(
+        player_game_summary_id=s_A.id, inning=2, result_short="二安"
+    )
+    ab5_last_ibb = models.AtBatDetailDB(
+        player_game_summary_id=s_B.id, inning=2, result_description_full="故意四壞"
+    )
+
+    db_session.add_all([ab1, ab2_ibb, ab3_next, ab4_new_inning, ab5_last_ibb])
+    db_session.commit()
+
+    response = client.get("/api/analysis/players/球員B/after-ibb")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data) == 2
+
+    # API 回傳結果按時間倒序，所以 data[0] 是最新的 IBB (第 2 局)
+    result_latest = data[0]
+    assert result_latest["intentional_walk"]["inning"] == 2
+    # 驗證該局最後一打席的 IBB，其 next_at_bat 應為 None
+    assert result_latest["next_at_bat"] is None
+
+    # data[1] 是較早的 IBB (第 1 局)
+    result_earlier = data[1]
+    assert result_earlier["intentional_walk"]["inning"] == 1
+    # 驗證其 next_at_bat 存在且結果正確
+    assert result_earlier["next_at_bat"] is not None
+    assert result_earlier["next_at_bat"]["result_short"] == "三振"
 
 
 # --- 手動觸發任務的端點 ---

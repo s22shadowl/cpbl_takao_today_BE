@@ -7,31 +7,29 @@ import re
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs
 from app.config import settings
-from app.models import AtBatResultType  # 【新增】匯入 Enum
+from app.models import AtBatResultType
+from typing import List, Optional
 
 
 def _determine_result_details(description: str) -> dict:
     """
-    【新增】根據打席的文字描述，解析出結構化的結果類型和得分。
+    根據打席的文字描述，解析出結構化的結果類型和得分。
     """
     result = {
         "result_type": AtBatResultType.UNSPECIFIED,
         "runs_scored_on_play": 0,
     }
 
-    # 判斷得分
     score_match = re.search(r"得(\d+)分", description)
     if score_match:
         result["runs_scored_on_play"] = int(score_match.group(1))
 
-    # 判斷結果類型 (順序很重要，優先匹配更精確的關鍵字)
     if "犧牲" in description:
         result["result_type"] = AtBatResultType.SACRIFICE
     elif "野手選擇" in description:
         result["result_type"] = AtBatResultType.FIELDERS_CHOICE
     elif "失誤" in description:
         result["result_type"] = AtBatResultType.ERROR
-    # 【修改】將「全壘打」加入上壘事件的判斷關鍵字中
     elif any(k in description for k in ["安打", "保送", "四壞", "觸身", "全壘打"]):
         result["result_type"] = AtBatResultType.ON_BASE
     elif any(k in description for k in ["三振", "出局", "雙殺", "封殺"]):
@@ -169,8 +167,8 @@ def parse_schedule_page(html_content, year):
     return parsed_games
 
 
-def parse_box_score_page(html_content):
-    """從 Box Score 頁面 HTML 中，解析出目標球隊的目標球員基本數據和簡易打席列表。"""
+def parse_box_score_page(html_content, target_teams: Optional[List[str]] = None):
+    """從 Box Score 頁面 HTML 中，解析出指定球隊的所有球員基本數據和簡易打席列表。"""
     if not html_content:
         return []
     soup = BeautifulSoup(html_content, "lxml")
@@ -189,11 +187,12 @@ def parse_box_score_page(html_content):
                 continue
             current_team_name = team_name_tag.text.strip()
 
-            if current_team_name != settings.TARGET_TEAM_NAME:
+            # 【修改】如果提供了 target_teams 列表，則只處理列表中的球隊
+            if target_teams and current_team_name not in target_teams:
                 continue
 
             logging.info(
-                f"成功匹配到目標球隊 [{current_team_name}] 的數據區塊，開始解析球員..."
+                f"成功匹配到球隊 [{current_team_name}] 的數據區塊，開始解析球員..."
             )
             batting_stats_table = block.select_one(
                 'div.DistTitle:has(h3:-soup-contains("打擊成績")) + div.RecordTableWrap table'
@@ -211,10 +210,7 @@ def parse_box_score_page(html_content):
                         continue
                     player_name = player_name_tag.text.strip()
 
-                    if player_name not in settings.TARGET_PLAYER_NAMES:
-                        continue
-
-                    logging.info(f"找到目標球員 [{player_name}] 的數據，準備提取...")
+                    logging.info(f"找到球員 [{player_name}] 的數據，準備提取...")
                     cells = player_row.find_all("td", class_="num")
                     col_map = [
                         "at_bats",
@@ -331,9 +327,6 @@ def parse_active_inning_details(inning_html_content, inning):
             if "no-pitch-action-remind" in item.get("class", []):
                 event_data["type"] = "no_pitch_action"
                 event_data["description"] = item.text.strip()
-                # 非打席事件，跳過後續處理
-                # continue
-                # 雖然可以跳過，但為了保持列表完整性，暫時不跳過，未來可擴充
             elif "play" in item.get("class", []):
                 event_data["type"] = "at_bat"
                 hitter_name_tag = item.select_one("div.player > a > span")
@@ -360,7 +353,6 @@ def parse_active_inning_details(inning_html_content, inning):
                 event_data.update(result_details)
 
                 pitch_detail_block = item.find("div", class_="detail")
-                # 【修改】無論有無 detail block，都繼續處理
                 if pitch_detail_block:
                     pitcher_name_tag = pitch_detail_block.select_one(
                         "div.detail_item.pitcher a"
@@ -402,7 +394,6 @@ def parse_active_inning_details(inning_html_content, inning):
                             pitch_list, ensure_ascii=False
                         )
 
-                # 將有效的 at_bat 事件加入列表
                 inning_events.append(event_data)
         except Exception as e:
             logging.error(f"解析單一打席事件時出錯: {e}", exc_info=True)
@@ -468,39 +459,38 @@ def parse_season_stats_page(html_content):
                 if player_name_cell
                 else cells[0].text.strip()
             )
-            if player_name in settings.TARGET_PLAYER_NAMES:
-                stats_data = {
-                    "player_name": player_name,
-                    "team_name": settings.TARGET_TEAM_NAME,
-                }
-                for i, header_text in enumerate(header_cells):
-                    db_col_name = header_map.get(header_text)
-                    if db_col_name and (i < len(cells)):
-                        value_str = cells[i].text.strip()
-                        if db_col_name in [
-                            "avg",
-                            "obp",
-                            "slg",
-                            "ops",
-                            "go_ao_ratio",
-                            "sb_percentage",
-                            "silver_slugger_index",
-                        ]:
-                            stats_data[db_col_name] = (
-                                float(value_str)
-                                if value_str and value_str != "."
-                                else 0.0
-                            )
-                        else:
-                            stats_data[db_col_name] = (
-                                int(value_str) if value_str.isdigit() else 0
-                            )
-                parsed_stats.append(stats_data)
+            # 【修改】移除對特定球員的篩選
+            # if player_name in settings.TARGET_PLAYER_NAMES:
+            stats_data = {
+                "player_name": player_name,
+                "team_name": settings.TARGET_TEAM_NAME,  # 這部分邏輯可能需要後續調整
+            }
+            for i, header_text in enumerate(header_cells):
+                db_col_name = header_map.get(header_text)
+                if db_col_name and (i < len(cells)):
+                    value_str = cells[i].text.strip()
+                    if db_col_name in [
+                        "avg",
+                        "obp",
+                        "slg",
+                        "ops",
+                        "go_ao_ratio",
+                        "sb_percentage",
+                        "silver_slugger_index",
+                    ]:
+                        stats_data[db_col_name] = (
+                            float(value_str) if value_str and value_str != "." else 0.0
+                        )
+                    else:
+                        stats_data[db_col_name] = (
+                            int(value_str) if value_str.isdigit() else 0
+                        )
+            parsed_stats.append(stats_data)
         except (IndexError, ValueError) as e:
             logging.error(
                 f"解析球員 [{player_name or '未知'}] 的累積數據時出錯，跳過此行: {e}",
                 exc_info=True,
             )
 
-    logging.info(f"從球隊頁面解析到 {len(parsed_stats)} 名目標球員的累積數據。")
+    logging.info(f"從球隊頁面解析到 {len(parsed_stats)} 名球員的累積數據。")
     return parsed_stats

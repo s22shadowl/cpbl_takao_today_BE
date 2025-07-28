@@ -4,9 +4,9 @@ import logging
 import datetime
 from typing import List, Dict, Any
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy.inspection import inspect
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 
 from . import models
 
@@ -269,12 +269,11 @@ def find_games_with_players(
             == len(player_names)
         )
         .subquery()
-        .select()
     )
 
     games = (
         db.query(models.GameResultDB)
-        .filter(models.GameResultDB.id.in_(subquery))
+        .filter(models.GameResultDB.id.in_(subquery.select()))
         .order_by(models.GameResultDB.game_date.desc())
         .all()
     )
@@ -309,7 +308,6 @@ def get_stats_since_last_homerun(
     last_hr_game = last_hr_at_bat.player_summary.game
     last_hr_date = last_hr_game.game_date
 
-    # 計算此後的出賽數與打數
     stats_since = (
         db.query(
             func.count(models.PlayerGameSummaryDB.game_id.distinct()).label(
@@ -345,7 +343,6 @@ def find_at_bats_in_situation(
         .filter(models.PlayerGameSummaryDB.player_name == player_name)
     )
 
-    # 根據 Enum 選擇不同的過濾條件
     if situation == models.RunnersSituation.BASES_LOADED:
         query = query.filter(
             models.AtBatDetailDB.runners_on_base_before == "一壘、二壘、三壘有人"
@@ -379,3 +376,57 @@ def get_summaries_by_position(
         .all()
     )
     return summaries
+
+
+def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str, Any]]:
+    """【V2 版】使用 SQL 窗口函數 (LEAD) 高效查詢指定球員被故意四壞後，同一半局內下一位打者的打席結果。"""
+
+    # 1. 建立一個子查詢 (CTE)，使用 LEAD() 窗口函數
+    #    - PARTITION BY game_id, inning: 【修改】確保 LEAD 只在同一場比賽、同一個半局內查找
+    #    - ORDER BY id: 假設 id 的順序代表打席的時序
+    at_bat_with_next_subquery = (
+        select(
+            models.AtBatDetailDB.id.label("at_bat_id"),
+            func.lead(models.AtBatDetailDB.id)
+            .over(
+                partition_by=(
+                    models.PlayerGameSummaryDB.game_id,
+                    models.AtBatDetailDB.inning,
+                ),
+                order_by=models.AtBatDetailDB.id,
+            )
+            .label("next_at_bat_id"),
+        )
+        .join(models.PlayerGameSummaryDB)
+        .subquery()
+    )
+
+    # 建立別名以便查詢
+    ibb_at_bat = aliased(models.AtBatDetailDB)
+    next_at_bat = aliased(models.AtBatDetailDB)
+
+    # 2. 執行主查詢
+    results = (
+        db.query(ibb_at_bat, next_at_bat)
+        .join(
+            at_bat_with_next_subquery,
+            ibb_at_bat.id == at_bat_with_next_subquery.c.at_bat_id,
+        )
+        .join(
+            models.PlayerGameSummaryDB,
+            ibb_at_bat.player_game_summary_id == models.PlayerGameSummaryDB.id,
+        )
+        .outerjoin(
+            next_at_bat,
+            at_bat_with_next_subquery.c.next_at_bat_id == next_at_bat.id,
+        )
+        .filter(models.PlayerGameSummaryDB.player_name == player_name)
+        .filter(ibb_at_bat.result_description_full.contains("故意四壞"))
+        .order_by(ibb_at_bat.id.desc())
+        .all()
+    )
+
+    # 3. 將查詢結果格式化為 Pydantic 模型所需的字典格式
+    return [
+        {"intentional_walk": ibb, "next_at_bat": next_ab} for ibb, next_ab in results
+    ]

@@ -126,7 +126,7 @@ def get_games_with_players(
     response_model=models.LastHomerunStats,
 )
 def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
-    """【修改】查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
+    """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
     stats = db_actions.get_stats_since_last_homerun(db, player_name)
     if not stats:
         raise HTTPException(
@@ -142,7 +142,7 @@ def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
 def get_situational_at_bats(
     player_name: str, situation: models.RunnersSituation, db: Session = Depends(get_db)
 ):
-    """【修改】根據指定的壘上情境，查詢球員的打席紀錄。"""
+    """根據指定的壘上情境，查詢球員的打席紀錄。"""
     at_bats = db_actions.find_at_bats_in_situation(db, player_name, situation)
     return at_bats
 
@@ -154,6 +154,16 @@ def get_position_records(position: str, db: Session = Depends(get_db)):
     """查詢指定守備位置的所有球員出賽紀錄。"""
     summaries = db_actions.get_summaries_by_position(db, position)
     return summaries
+
+
+@app.get(
+    "/api/analysis/players/{player_name}/after-ibb",
+    response_model=List[models.NextAtBatResult],
+)
+def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
+    """查詢指定球員被故意四壞後，下一位打者的打席結果。"""
+    results = db_actions.find_next_at_bats_after_ibb(db, player_name)
+    return results
 
 
 # --- 手動觸發任務的端點 ---

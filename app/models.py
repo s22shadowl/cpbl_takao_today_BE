@@ -34,6 +34,12 @@ class AtBatResultType(enum.Enum):
     ERROR = "ERROR"  # 因失誤上壘
 
 
+class RunnersSituation(str, enum.Enum):
+    BASES_EMPTY = "bases_empty"
+    SCORING_POSITION = "scoring_position"
+    BASES_LOADED = "bases_loaded"
+
+
 # ==============================================================================
 # 1. SQLAlchemy ORM Models (資料庫表格定義)
 # ==============================================================================
@@ -281,7 +287,6 @@ class Message(BaseModel):
     message: str
 
 
-# 【新增】建立 Pydantic 基礎模型以共享球季數據欄位
 class PlayerSeasonStatsBase(BaseModel):
     player_name: str
     team_name: Optional[str] = None
@@ -317,7 +322,6 @@ class PlayerSeasonStatsBase(BaseModel):
     silver_slugger_index: Optional[float] = None
 
 
-# 【修改】讓 PlayerSeasonStats 繼承自基礎模型
 class PlayerSeasonStats(PlayerSeasonStatsBase):
     id: int
     updated_at: Optional[datetime.datetime] = None
@@ -325,7 +329,6 @@ class PlayerSeasonStats(PlayerSeasonStatsBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# 【新增】為歷史紀錄表建立對應的 Pydantic 模型
 class PlayerSeasonStatsHistory(PlayerSeasonStatsBase):
     id: int
     created_at: datetime.datetime
@@ -333,17 +336,17 @@ class PlayerSeasonStatsHistory(PlayerSeasonStatsBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# 【新增】定義壘上情境的 Enum，供 API 參數使用
-class RunnersSituation(str, enum.Enum):
-    BASES_EMPTY = "bases_empty"
-    SCORING_POSITION = "scoring_position"
-    BASES_LOADED = "bases_loaded"
-
-
-# 【新增】定義「最後一轟」API 的回應模型
 class LastHomerunStats(BaseModel):
     last_homerun: AtBatDetail
     game_date: datetime.date
     days_since: int
     games_since: int
     at_bats_since: int
+
+
+# 【修正】將 NextAtBatResult 模型定義補上
+class NextAtBatResult(BaseModel):
+    intentional_walk: AtBatDetail
+    next_at_bat: Optional[AtBatDetail] = None
+
+    model_config = ConfigDict(from_attributes=True)

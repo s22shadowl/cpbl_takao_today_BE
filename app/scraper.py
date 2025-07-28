@@ -5,6 +5,7 @@ import time
 import logging
 from playwright.sync_api import sync_playwright, expect
 import re
+from typing import List, Optional
 
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 def scrape_and_store_season_stats():
     """抓取並儲存目標球員的球季累積數據。"""
+    # TODO: 此函式未來也應重構，以支援多球隊數據的抓取
     club_no = TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
     if not club_no:
         logger.error(
@@ -41,12 +43,11 @@ def scrape_and_store_season_stats():
 
     season_stats_list = html_parser.parse_season_stats_page(html_content)
     if not season_stats_list:
-        logger.info("未解析到任何目標球員的球季數據。")
+        logger.info("未解析到任何球員的球季數據。")
         return
 
     db = SessionLocal()
     try:
-        # 【修改】呼叫新的函式，以同時儲存最新數據與歷史紀錄
         db_actions.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
     except Exception as e:
@@ -59,8 +60,10 @@ def scrape_and_store_season_stats():
     logger.info("--- 球季累積數據抓取完畢 ---")
 
 
-def _process_filtered_games(games_to_process):
-    """【交易管理重構版】處理比賽列表，採用最終正確的「逐局切換、展開、解析」互動邏輯。"""
+def _process_filtered_games(
+    games_to_process: List[dict], target_teams: Optional[List[str]] = None
+):
+    """【修改】處理比賽列表，並可選擇性地只處理指定球隊的比賽。"""
     if not games_to_process:
         return
     logger.info(f"準備處理 {len(games_to_process)} 場比賽...")
@@ -69,6 +72,7 @@ def _process_filtered_games(games_to_process):
         db = SessionLocal()
         try:
             for game_info in games_to_process:
+                # 在 E2E 模式下，我們只關心資料是否能成功寫入
                 if settings.TARGET_TEAM_NAME not in [
                     game_info.get("home_team"),
                     game_info.get("away_team"),
@@ -112,7 +116,7 @@ def _process_filtered_games(games_to_process):
         finally:
             if db:
                 db.close()
-        return  # == E2E 程式碼到此結束 ==
+        return
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
@@ -128,15 +132,16 @@ def _process_filtered_games(games_to_process):
             try:
                 if game_info.get("status") != "已完成":
                     continue
-                if settings.TARGET_TEAM_NAME not in [
-                    game_info.get("home_team"),
-                    game_info.get("away_team"),
-                ]:
-                    continue
 
-                logger.info(
-                    f"處理目標球隊比賽 (CPBL ID: {game_info.get('cpbl_game_id')})..."
-                )
+                # 【修改】如果提供了 target_teams 列表，則只處理相關的比賽
+                if target_teams:
+                    if (
+                        game_info.get("home_team") not in target_teams
+                        and game_info.get("away_team") not in target_teams
+                    ):
+                        continue
+
+                logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
                 game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
                 if not game_id_in_db:
                     continue
@@ -148,7 +153,10 @@ def _process_filtered_games(games_to_process):
                 page.wait_for_selector(
                     "div.GameBoxDetail", state="visible", timeout=30000
                 )
-                all_players_data = html_parser.parse_box_score_page(page.content())
+                # 【修改】將 target_teams 參數傳遞給 parser
+                all_players_data = html_parser.parse_box_score_page(
+                    page.content(), target_teams=target_teams
+                )
                 if not all_players_data:
                     continue
 
@@ -172,28 +180,24 @@ def _process_filtered_games(games_to_process):
                     active_inning_content = page.locator(
                         "div.InningPlaysGroup div.tab_cont.active"
                     )
-                    is_target_home = settings.TARGET_TEAM_NAME == game_info.get(
-                        "home_team"
-                    )
-                    target_half_inning_selector = (
-                        "section.bot" if is_target_home else "section.top"
-                    )
-                    half_inning_section = active_inning_content.locator(
-                        target_half_inning_selector
-                    )
-                    if half_inning_section.count() > 0:
-                        expand_buttons = half_inning_section.locator(
-                            'a[title="展開打擊紀錄"]'
-                        ).all()
-                        logger.info(
-                            f"處理第 {inning_num} 局 [{settings.TARGET_TEAM_NAME}]，找到 {len(expand_buttons)} 個打席，準備展開..."
+
+                    for half_inning_selector in ["section.top", "section.bot"]:
+                        half_inning_section = active_inning_content.locator(
+                            half_inning_selector
                         )
-                        for button in expand_buttons:
-                            try:
-                                if button.is_visible(timeout=500):
-                                    button.click(timeout=500)
-                            except Exception:
-                                pass
+                        if half_inning_section.count() > 0:
+                            expand_buttons = half_inning_section.locator(
+                                'a[title="展開打擊紀錄"]'
+                            ).all()
+                            logger.info(
+                                f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {len(expand_buttons)} 個打席，準備展開..."
+                            )
+                            for button in expand_buttons:
+                                try:
+                                    if button.is_visible(timeout=500):
+                                        button.click(timeout=500)
+                                except Exception:
+                                    pass
 
                     inning_html = active_inning_content.inner_html()
                     parsed_events = html_parser.parse_active_inning_details(
@@ -229,13 +233,17 @@ def _process_filtered_games(games_to_process):
                         if runners_str_list
                         else "壘上無人"
                     )
-                    if event.get("hitter_name") in settings.TARGET_PLAYER_NAMES:
-                        hitter = event["hitter_name"]
+
+                    hitter = event.get("hitter_name")
+                    if hitter:
+                        if hitter not in player_pa_counter:
+                            player_pa_counter[hitter] = 0
                         player_pa_counter[hitter] += 1
                         event["sequence_in_game"] = player_pa_counter[hitter]
                         event["outs_before"] = outs_before
                         event["runners_on_base_before"] = runners_on_base_before
                         all_at_bats_details_enriched.append(event)
+
                     desc = event.get("description", "")
                     inning_state[inning]["outs"] = _update_outs_count(
                         desc, current_outs
@@ -325,7 +333,8 @@ def scrape_single_day(specific_date=None):
     games_for_day = [
         game for game in all_month_games if game.get("game_date") == target_date_str
     ]
-    _process_filtered_games(games_for_day)
+    # 【修改】從 settings 讀取目標球隊列表並傳遞下去
+    _process_filtered_games(games_for_day, target_teams=settings.TARGET_TEAMS)
     logger.info("--- [單日模式] 執行完畢 ---")
 
 
@@ -365,9 +374,9 @@ def scrape_entire_month(month_str=None):
             for game in all_month_games
             if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date() <= today
         ]
-        _process_filtered_games(games_to_process)
+        _process_filtered_games(games_to_process, target_teams=settings.TARGET_TEAMS)
     else:
-        _process_filtered_games(all_month_games)
+        _process_filtered_games(all_month_games, target_teams=settings.TARGET_TEAMS)
 
     logger.info("--- [逐月模式] 執行完畢 ---")
 
@@ -401,7 +410,9 @@ def scrape_entire_year(year_str=None):
                     if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date()
                     <= today
                 ]
-                _process_filtered_games(games_to_process)
+                _process_filtered_games(
+                    games_to_process, target_teams=settings.TARGET_TEAMS
+                )
         logger.info(f"處理完 {year_to_scrape}-{month:02d}，稍作等待...")
         time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
     logger.info("--- [逐年模式] 執行完畢 ---")

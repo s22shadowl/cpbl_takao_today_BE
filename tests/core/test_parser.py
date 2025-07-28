@@ -3,7 +3,8 @@
 import pytest
 from pathlib import Path
 from app.core import parser
-from app.models import AtBatResultType  # 【新增】匯入 Enum
+from app.models import AtBatResultType
+from app.config import settings
 
 FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
 
@@ -91,15 +92,35 @@ def test_parse_schedule_page(schedule_html_content):
 
 
 def test_parse_season_stats_page(team_score_html_content):
+    """【修改】驗證函式能解析出所有球員，而不只是特定目標球員"""
     result = parser.parse_season_stats_page(team_score_html_content)
     assert isinstance(result, list)
-    assert len(result) == 3
+    # 斷言解析出的球員數量應大於等於我們已知的目標球員數量
+    assert len(result) >= len(settings.TARGET_PLAYER_NAMES)
+
+    # 驗證所有已知的目標球員都包含在解析結果中
+    parsed_player_names = {p["player_name"] for p in result}
+    assert set(settings.TARGET_PLAYER_NAMES).issubset(parsed_player_names)
 
 
 def test_parse_box_score_page(box_score_html_content):
-    result = parser.parse_box_score_page(box_score_html_content)
-    assert isinstance(result, list)
-    assert len(result) == 3
+    """【修改】驗證函式能解析出所有球員，並可透過參數篩選"""
+    # 案例一：不帶參數，應解析出所有球員
+    result_all = parser.parse_box_score_page(box_score_html_content)
+    assert isinstance(result_all, list)
+    assert len(result_all) > len(
+        settings.TARGET_PLAYER_NAMES
+    )  # 假定 fixture 中有更多球員
+
+    # 案例二：帶入參數，只解析指定球隊的球員
+    # 【修正】將目標球隊改為從 settings 動態讀取
+    target_team = settings.TARGET_TEAMS[0]
+    result_filtered = parser.parse_box_score_page(
+        box_score_html_content, target_teams=[target_team]
+    )
+    assert isinstance(result_filtered, list)
+    assert len(result_filtered) > 0
+    assert all(p["summary"]["team_name"] == target_team for p in result_filtered)
 
 
 def test_parse_active_inning_details(active_inning_html_content):
@@ -109,27 +130,23 @@ def test_parse_active_inning_details(active_inning_html_content):
         active_inning_html_content, inning=inning_number
     )
 
-    # 應解析出兩個 at_bat 事件
     assert len(events) == 2
 
-    # --- 驗證第一個事件 (吳念庭) ---
     event1 = events[0]
     assert event1["inning"] == inning_number
     assert event1["hitter_name"] == "吳念庭"
     assert event1["opposing_pitcher_name"] == "黃子鵬"
-    # 【新增】驗證新欄位
     assert event1["runs_scored_on_play"] == 2
     assert event1["result_type"] == AtBatResultType.ON_BASE
 
-    # --- 驗證第二個事件 (林立) ---
     event2 = events[1]
     assert event2["hitter_name"] == "林立"
-    # 【新增】驗證新欄位
     assert event2["runs_scored_on_play"] == 0
     assert event2["result_type"] == AtBatResultType.ON_BASE
+    assert "opposing_pitcher_name" not in event2
+    assert "pitch_sequence_details" not in event2
 
 
-# 【新增】針對 _determine_result_details 輔助函式的參數化測試
 @pytest.mark.parametrize(
     "description, expected_type, expected_runs",
     [

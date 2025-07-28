@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     # 其他應用程式設定
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://12-7.0.0.1:3000"]
     TARGET_TEAM_NAME: str = "台鋼雄鷹"
+    TARGET_TEAMS: List[str] = ["台鋼雄鷹"]
     TARGET_PLAYER_NAMES: List[str] = ["王柏融", "魔鷹", "吳念庭"]
     BASE_URL: str = "https://www.cpbl.com.tw"
     SCHEDULE_URL: str = f"{BASE_URL}/schedule"
