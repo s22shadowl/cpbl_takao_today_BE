@@ -6,6 +6,7 @@ from typing import List, Dict, Any
 
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.inspection import inspect
+from sqlalchemy import func, or_
 
 from . import models
 
@@ -247,3 +248,134 @@ def get_game_with_details(db: Session, game_id: int) -> models.GameResultDB | No
             f"獲取比賽詳細資料時發生錯誤 (game_id: {game_id}): {e}", exc_info=True
         )
         return None
+
+
+# --- 進階查詢函式 ---
+
+
+def find_games_with_players(
+    db: Session, player_names: List[str]
+) -> List[models.GameResultDB]:
+    """查詢指定的所有球員同時出賽的比賽列表。"""
+    if not player_names:
+        return []
+
+    subquery = (
+        db.query(models.PlayerGameSummaryDB.game_id)
+        .filter(models.PlayerGameSummaryDB.player_name.in_(player_names))
+        .group_by(models.PlayerGameSummaryDB.game_id)
+        .having(
+            func.count(models.PlayerGameSummaryDB.player_name.distinct())
+            == len(player_names)
+        )
+        .subquery()
+        .select()
+    )
+
+    games = (
+        db.query(models.GameResultDB)
+        .filter(models.GameResultDB.id.in_(subquery))
+        .order_by(models.GameResultDB.game_date.desc())
+        .all()
+    )
+    return games
+
+
+def get_stats_since_last_homerun(
+    db: Session, player_name: str
+) -> Dict[str, Any] | None:
+    """【修改】查詢指定球員的最後一發全壘打，並計算此後的相關數據。"""
+    last_hr_at_bat = (
+        db.query(models.AtBatDetailDB)
+        .join(models.PlayerGameSummaryDB)
+        .join(models.GameResultDB)
+        .filter(models.PlayerGameSummaryDB.player_name == player_name)
+        .filter(models.AtBatDetailDB.result_description_full.contains("全壘打"))
+        .order_by(
+            models.GameResultDB.game_date.desc(),
+            models.AtBatDetailDB.sequence_in_game.desc(),
+        )
+        .options(
+            joinedload(models.AtBatDetailDB.player_summary).joinedload(
+                models.PlayerGameSummaryDB.game
+            )
+        )
+        .first()
+    )
+
+    if not last_hr_at_bat:
+        return None
+
+    last_hr_game = last_hr_at_bat.player_summary.game
+    last_hr_date = last_hr_game.game_date
+
+    # 計算此後的出賽數與打數
+    stats_since = (
+        db.query(
+            func.count(models.PlayerGameSummaryDB.game_id.distinct()).label(
+                "games_since"
+            ),
+            func.sum(models.PlayerGameSummaryDB.at_bats).label("at_bats_since"),
+        )
+        .join(models.GameResultDB)
+        .filter(
+            models.PlayerGameSummaryDB.player_name == player_name,
+            models.GameResultDB.game_date >= last_hr_date,
+        )
+        .one()
+    )
+
+    return {
+        "last_homerun": last_hr_at_bat,
+        "game_date": last_hr_date,
+        "days_since": (datetime.date.today() - last_hr_date).days,
+        "games_since": stats_since.games_since,
+        "at_bats_since": stats_since.at_bats_since,
+    }
+
+
+def find_at_bats_in_situation(
+    db: Session, player_name: str, situation: models.RunnersSituation
+) -> List[models.AtBatDetailDB]:
+    """【修改】查詢指定球員在特定壘上情境下的所有打席紀錄。"""
+    query = (
+        db.query(models.AtBatDetailDB)
+        .join(models.PlayerGameSummaryDB)
+        .join(models.GameResultDB)
+        .filter(models.PlayerGameSummaryDB.player_name == player_name)
+    )
+
+    # 根據 Enum 選擇不同的過濾條件
+    if situation == models.RunnersSituation.BASES_LOADED:
+        query = query.filter(
+            models.AtBatDetailDB.runners_on_base_before == "一壘、二壘、三壘有人"
+        )
+    elif situation == models.RunnersSituation.SCORING_POSITION:
+        query = query.filter(
+            or_(
+                models.AtBatDetailDB.runners_on_base_before.contains("二壘"),
+                models.AtBatDetailDB.runners_on_base_before.contains("三壘"),
+            )
+        )
+    elif situation == models.RunnersSituation.BASES_EMPTY:
+        query = query.filter(models.AtBatDetailDB.runners_on_base_before == "壘上無人")
+
+    at_bats = query.order_by(
+        models.GameResultDB.game_date.desc(),
+        models.AtBatDetailDB.sequence_in_game.desc(),
+    ).all()
+    return at_bats
+
+
+def get_summaries_by_position(
+    db: Session, position: str
+) -> List[models.PlayerGameSummaryDB]:
+    """查詢指定守備位置的所有球員出賽紀錄。"""
+    summaries = (
+        db.query(models.PlayerGameSummaryDB)
+        .filter(models.PlayerGameSummaryDB.position == position)
+        .join(models.GameResultDB)
+        .order_by(models.GameResultDB.game_date.desc())
+        .all()
+    )
+    return summaries

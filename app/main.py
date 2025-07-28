@@ -2,7 +2,7 @@
 
 import datetime
 import logging
-from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi import FastAPI, HTTPException, Depends, Security, Query
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 from typing import List, Optional
@@ -12,11 +12,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
-from app import models
+from app import models, db_actions
 from app.db import get_db
 from app.config import settings
-
-# **核心修正**: 在 main.py 中匯入 setup_logging
 from app.logging_config import setup_logging
 from app.tasks import (
     task_update_schedule_and_reschedule,
@@ -31,10 +29,6 @@ logger = logging.getLogger(__name__)
 # --- FastAPI 應用程式設定 ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    應用程式生命週期管理。
-    """
-    # **核心修正**: 在應用程式啟動時，呼叫 setup_logging
     setup_logging()
     logger.info("應用程式啟動中...")
     yield
@@ -63,8 +57,6 @@ async def get_api_key(api_key: str = Security(api_key_header)):
     return api_key
 
 
-# --- 新增 ---
-# 定義一個 Pydantic 模型來代表 /api/run_scraper 的請求主體
 class ScraperRequest(BaseModel):
     mode: str
     date: Optional[str] = None
@@ -87,20 +79,88 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
         .filter(models.GameResultDB.game_date == parsed_date)
         .all()
     )
-
-    if not games:
-        raise HTTPException(
-            status_code=404, detail=f"找不到日期 {game_date} 的比賽結果。"
-        )
-
     return games
 
 
+@app.get("/api/games/details/{game_id}", response_model=models.GameResultWithDetails)
+def get_game_details(game_id: int, db: Session = Depends(get_db)):
+    game = db_actions.get_game_with_details(db, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail=f"找不到 ID 為 {game_id} 的比賽。")
+    return game
+
+
+@app.get(
+    "/api/players/{player_name}/stats/history",
+    response_model=List[models.PlayerSeasonStatsHistory],
+)
+def get_player_stats_history(player_name: str, db: Session = Depends(get_db)):
+    history = (
+        db.query(models.PlayerSeasonStatsHistoryDB)
+        .filter(models.PlayerSeasonStatsHistoryDB.player_name == player_name)
+        .order_by(models.PlayerSeasonStatsHistoryDB.created_at)
+        .all()
+    )
+    if not history:
+        raise HTTPException(
+            status_code=404, detail=f"找不到球員 {player_name} 的歷史數據。"
+        )
+    return history
+
+
+# --- 進階分析 API 端點 ---
+
+
+@app.get("/api/analysis/games-with-players", response_model=List[models.GameResult])
+def get_games_with_players(
+    players: List[str] = Query(..., description="球員姓名列表"),
+    db: Session = Depends(get_db),
+):
+    """查詢指定的所有球員同時出賽的比賽列表。"""
+    games = db_actions.find_games_with_players(db, players)
+    return games
+
+
+@app.get(
+    "/api/analysis/players/{player_name}/last-homerun",
+    response_model=models.LastHomerunStats,
+)
+def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
+    """【修改】查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
+    stats = db_actions.get_stats_since_last_homerun(db, player_name)
+    if not stats:
+        raise HTTPException(
+            status_code=404, detail=f"找不到球員 {player_name} 的全壘打紀錄。"
+        )
+    return stats
+
+
+@app.get(
+    "/api/analysis/players/{player_name}/situational-at-bats",
+    response_model=List[models.AtBatDetail],
+)
+def get_situational_at_bats(
+    player_name: str, situation: models.RunnersSituation, db: Session = Depends(get_db)
+):
+    """【修改】根據指定的壘上情境，查詢球員的打席紀錄。"""
+    at_bats = db_actions.find_at_bats_in_situation(db, player_name, situation)
+    return at_bats
+
+
+@app.get(
+    "/api/analysis/positions/{position}", response_model=List[models.PlayerGameSummary]
+)
+def get_position_records(position: str, db: Session = Depends(get_db)):
+    """查詢指定守備位置的所有球員出賽紀錄。"""
+    summaries = db_actions.get_summaries_by_position(db, position)
+    return summaries
+
+
+# --- 手動觸發任務的端點 ---
+
+
 @app.post("/api/run_scraper", status_code=202, dependencies=[Depends(get_api_key)])
-# --- 修改 ---
-# 將函式參數改為接收我們定義的 Pydantic 模型
 def run_scraper_manually(request_data: ScraperRequest):
-    # 從 request_data 物件中取得 mode 和 date
     mode = request_data.mode
     date = request_data.date
 

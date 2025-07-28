@@ -1,12 +1,13 @@
+# tests/test_main.py
+
 import pytest
+import datetime
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 from sqlalchemy.orm import Session
 
-# 導入我們要測試的 app 物件和依賴函式
 from app.main import app, get_api_key
-
-# 導入 models 和 db_actions 以便在測試中準備資料
-from app import db_actions
+from app import db_actions, models
 
 # --- 輔助函式 (Overrides) ---
 
@@ -19,11 +20,8 @@ def override_get_api_key_success():
 # --- 測試案例 ---
 
 
-# 測試 /api/games/{game_date} 端點
 def test_get_games_by_date_success(client: TestClient, db_session: Session):
     """測試 /api/games/{game_date} 端點在成功獲取數據時的情況"""
-    # 步驟 1: 準備測試資料
-    # 使用 db_session fixture 直接寫入資料到記憶體資料庫
     game_info_1 = {
         "cpbl_game_id": "TEST_MAIN_01",
         "game_date": "2025-06-21",
@@ -34,11 +32,8 @@ def test_get_games_by_date_success(client: TestClient, db_session: Session):
     db_actions.store_game_and_get_id(db_session, game_info_1)
     db_session.commit()
 
-    # 步驟 2: 透過 TestClient 呼叫 API
-    # 這個 API 呼叫會實際查詢我們剛寫入資料的記憶體資料庫
     response = client.get("/api/games/2025-06-21")
 
-    # 步驟 3: 驗證回應
     assert response.status_code == 200
     json_response = response.json()
     assert len(json_response) == 1
@@ -46,12 +41,10 @@ def test_get_games_by_date_success(client: TestClient, db_session: Session):
 
 
 def test_get_games_by_date_not_found(client: TestClient):
-    """測試 /api/games/{game_date} 端點在查無資料時返回 404"""
-    # 直接呼叫一個不存在資料的日期，因為資料庫是乾淨的，所以應返回 404
+    """【修改】測試 /api/games/{game_date} 端點在查無資料時返回 200 和空列表"""
     response = client.get("/api/games/2025-01-01")
-
-    assert response.status_code == 404
-    assert "找不到日期" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_get_games_by_date_bad_format(client: TestClient):
@@ -60,7 +53,281 @@ def test_get_games_by_date_bad_format(client: TestClient):
     assert response.status_code == 422
 
 
-# 測試 /api/run_scraper 端點
+def test_get_game_details_success(client: TestClient, db_session: Session):
+    """【擴充】測試獲取單場比賽完整細節的端點，包含多球員與多打席情境"""
+    game = models.GameResultDB(
+        cpbl_game_id="TEST_DETAIL_API",
+        game_date=datetime.date(2025, 7, 22),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    summary1 = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="測試員API_1", team_name="測試隊"
+    )
+    db_session.add(summary1)
+    db_session.flush()
+    detail1_1 = models.AtBatDetailDB(
+        player_game_summary_id=summary1.id, sequence_in_game=1, result_short="全壘打"
+    )
+    detail1_2 = models.AtBatDetailDB(
+        player_game_summary_id=summary1.id, sequence_in_game=2, result_short="三振"
+    )
+    db_session.add_all([detail1_1, detail1_2])
+
+    summary2 = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="測試員API_2", team_name="測試隊"
+    )
+    db_session.add(summary2)
+    db_session.flush()
+    detail2_1 = models.AtBatDetailDB(
+        player_game_summary_id=summary2.id, sequence_in_game=1, result_short="一壘安打"
+    )
+    db_session.add(detail2_1)
+
+    db_session.commit()
+
+    response = client.get(f"/api/games/details/{game.id}")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["cpbl_game_id"] == "TEST_DETAIL_API"
+    assert len(data["player_summaries"]) == 2
+
+    player1_summary = next(
+        p for p in data["player_summaries"] if p["player_name"] == "測試員API_1"
+    )
+    assert len(player1_summary["at_bat_details"]) == 2
+    assert player1_summary["at_bat_details"][0]["result_short"] == "全壘打"
+
+    player2_summary = next(
+        p for p in data["player_summaries"] if p["player_name"] == "測試員API_2"
+    )
+    assert len(player2_summary["at_bat_details"]) == 1
+    assert player2_summary["at_bat_details"][0]["result_short"] == "一壘安打"
+
+
+def test_get_game_details_not_found(client: TestClient):
+    """測試查詢不存在的比賽 ID 時返回 404"""
+    response = client.get("/api/games/details/9999")
+    assert response.status_code == 404
+
+
+def test_get_player_stats_history_success(client: TestClient, db_session: Session):
+    """【擴充】測試獲取球員球季數據歷史紀錄的端點，確保能正確過濾球員"""
+    history_A1 = models.PlayerSeasonStatsHistoryDB(
+        player_name="歷史哥A", avg=0.250, created_at=datetime.datetime(2025, 7, 20)
+    )
+    history_A2 = models.PlayerSeasonStatsHistoryDB(
+        player_name="歷史哥A", avg=0.255, created_at=datetime.datetime(2025, 7, 21)
+    )
+    history_B1 = models.PlayerSeasonStatsHistoryDB(
+        player_name="歷史哥B", avg=0.300, created_at=datetime.datetime(2025, 7, 21)
+    )
+    db_session.add_all([history_A1, history_A2, history_B1])
+    db_session.commit()
+
+    response = client.get("/api/players/歷史哥A/stats/history")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["avg"] == 0.250
+    assert data[1]["avg"] == 0.255
+    assert all(item["player_name"] == "歷史哥A" for item in data)
+
+
+def test_get_player_stats_history_not_found(client: TestClient):
+    """測試查詢不存在的球員歷史數據時返回 404"""
+    response = client.get("/api/players/路人甲/stats/history")
+    assert response.status_code == 404
+
+
+# --- 進階分析端點測試 ---
+
+
+def test_get_games_with_players_includes_non_starters(
+    client: TestClient, db_session: Session
+):
+    """【擴充】測試查詢指定球員群組（包含非先發）是否同時出賽"""
+    g1 = models.GameResultDB(
+        cpbl_game_id="G1",
+        game_date=datetime.date(2025, 8, 1),
+        home_team="H",
+        away_team="A",
+    )
+    g2 = models.GameResultDB(
+        cpbl_game_id="G2",
+        game_date=datetime.date(2025, 8, 2),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add_all([g1, g2])
+    db_session.flush()
+    # G1 有 A (先發), B (代打)
+    s1a = models.PlayerGameSummaryDB(game_id=g1.id, player_name="球員A", position="RF")
+    s1b = models.PlayerGameSummaryDB(game_id=g1.id, player_name="球員B", position="PH")
+    # G2 只有 A (先發)
+    s2a = models.PlayerGameSummaryDB(game_id=g2.id, player_name="球員A", position="RF")
+    db_session.add_all([s1a, s1b, s2a])
+    db_session.commit()
+
+    # 查詢 A, B -> 應回傳 G1
+    response = client.get(
+        "/api/analysis/games-with-players?players=球員A&players=球員B"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["cpbl_game_id"] == "G1"
+
+
+def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
+    """【修改】測試查詢球員的最後一轟，並驗證回傳的統計數據"""
+    # 凍結時間以進行可預測的計算
+    freezed_today = datetime.date(2025, 8, 10)
+
+    g1 = models.GameResultDB(
+        cpbl_game_id="G_HR1",
+        game_date=datetime.date(2025, 8, 1),
+        home_team="H",
+        away_team="A",
+    )
+    g2 = models.GameResultDB(
+        cpbl_game_id="G_HR2",
+        game_date=datetime.date(2025, 8, 5),
+        home_team="H",
+        away_team="A",
+    )  # 最後一轟的比賽
+    g3 = models.GameResultDB(
+        cpbl_game_id="G_HR3",
+        game_date=datetime.date(2025, 8, 8),
+        home_team="H",
+        away_team="A",
+    )  # 全壘打後的比賽
+    db_session.add_all([g1, g2, g3])
+    db_session.flush()
+
+    s1 = models.PlayerGameSummaryDB(game_id=g1.id, player_name="轟炸基", at_bats=4)
+    s2 = models.PlayerGameSummaryDB(game_id=g2.id, player_name="轟炸基", at_bats=5)
+    s3 = models.PlayerGameSummaryDB(game_id=g3.id, player_name="轟炸基", at_bats=3)
+    db_session.add_all([s1, s2, s3])
+    db_session.flush()
+
+    hr1 = models.AtBatDetailDB(
+        player_game_summary_id=s1.id, result_description_full="全壘打"
+    )
+    hr2 = models.AtBatDetailDB(
+        player_game_summary_id=s2.id,
+        result_description_full="關鍵全壘打",
+        opposing_pitcher_name="投手B",
+    )
+    db_session.add_all([hr1, hr2])
+    db_session.commit()
+
+    with patch("app.db_actions.datetime.date") as mock_date:
+        mock_date.today.return_value = freezed_today
+        response = client.get("/api/analysis/players/轟炸基/last-homerun")
+
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["last_homerun"]["opposing_pitcher_name"] == "投手B"
+    assert data["game_date"] == "2025-08-05"
+    assert data["days_since"] == 5  # 8/10 - 8/5
+    assert data["games_since"] == 2  # 8/5 和 8/8 的比賽
+    assert data["at_bats_since"] == 8  # 5 + 3
+
+
+def test_get_situational_at_bats(client: TestClient, db_session: Session):
+    """【修改】測試使用 Enum 查詢不同壘上情境的打席紀錄"""
+    game = models.GameResultDB(
+        cpbl_game_id="G_SIT",
+        game_date=datetime.date(2025, 8, 8),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+    summary = models.PlayerGameSummaryDB(game_id=game.id, player_name="情境男")
+    db_session.add(summary)
+    db_session.flush()
+    ab1 = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        runners_on_base_before="壘上無人",
+        result_short="滾地",
+    )
+    ab2 = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        runners_on_base_before="一壘、二壘、三壘有人",
+        result_short="滿貫砲",
+    )
+    ab3 = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        runners_on_base_before="二壘有人",
+        result_short="安打",
+    )
+    db_session.add_all([ab1, ab2, ab3])
+    db_session.commit()
+
+    # 測試滿壘
+    response_bl = client.get(
+        "/api/analysis/players/情境男/situational-at-bats?situation=bases_loaded"
+    )
+    assert response_bl.status_code == 200
+    data_bl = response_bl.json()
+    assert len(data_bl) == 1
+    assert data_bl[0]["result_short"] == "滿貫砲"
+
+    # 測試得點圈有人
+    response_sp = client.get(
+        "/api/analysis/players/情境男/situational-at-bats?situation=scoring_position"
+    )
+    assert response_sp.status_code == 200
+    data_sp = response_sp.json()
+    assert len(data_sp) == 2  # 滿壘 + 二壘有人
+
+    # 測試壘上無人
+    response_be = client.get(
+        "/api/analysis/players/情境男/situational-at-bats?situation=bases_empty"
+    )
+    assert response_be.status_code == 200
+    data_be = response_be.json()
+    assert len(data_be) == 1
+    assert data_be[0]["result_short"] == "滾地"
+
+
+def test_get_position_records(client: TestClient, db_session: Session):
+    """測試查詢指定守備位置的紀錄"""
+    game = models.GameResultDB(
+        cpbl_game_id="G_POS",
+        game_date=datetime.date(2025, 8, 9),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+    s1 = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="球員SS", position="游擊手"
+    )
+    s2 = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="球員CF", position="中外野手"
+    )
+    db_session.add_all([s1, s2])
+    db_session.commit()
+
+    response = client.get("/api/analysis/positions/游擊手")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["player_name"] == "球員SS"
+
+
+# --- 手動觸發任務的端點 ---
+
+
 @pytest.mark.parametrize(
     "mode, date_param, expected_task_str",
     [
@@ -72,62 +339,48 @@ def test_get_games_by_date_bad_format(client: TestClient):
 def test_run_scraper_manually(
     client: TestClient, mocker, mode, date_param, expected_task_str
 ):
-    """測試手動觸發爬蟲的 API 端點，驗證對應的 Dramatiq 任務是否被發送"""
     mock_task = mocker.patch(expected_task_str)
-
-    # 在測試函式內部，精準地覆寫 API 金鑰依賴
     app.dependency_overrides[get_api_key] = override_get_api_key_success
-
     headers = {"X-API-Key": "any-key-will-do"}
     request_payload = {"mode": mode, "date": date_param}
     response = client.post("/api/run_scraper", headers=headers, json=request_payload)
-
-    # 測試結束後，清理掉覆寫，以免影響其他測試
     del app.dependency_overrides[get_api_key]
-
     assert response.status_code == 202
     mock_task.send.assert_called_once_with(date_param)
 
 
 def test_run_scraper_manually_invalid_mode(client: TestClient):
-    """測試手動觸發爬蟲時使用無效模式"""
     app.dependency_overrides[get_api_key] = override_get_api_key_success
     headers = {"X-API-Key": "any-key-will-do"}
     request_payload = {"mode": "invalid_mode", "date": None}
     response = client.post("/api/run_scraper", headers=headers, json=request_payload)
     del app.dependency_overrides[get_api_key]
-
     assert response.status_code == 400
 
 
-# 測試 /api/update_schedule 端點
 def test_update_schedule_manually(client: TestClient, mocker):
-    """測試手動觸發賽程更新的 API 端點"""
     mock_task = mocker.patch("app.main.task_update_schedule_and_reschedule")
-
     app.dependency_overrides[get_api_key] = override_get_api_key_success
     headers = {"X-API-Key": "any-key-will-do"}
     response = client.post("/api/update_schedule", headers=headers)
     del app.dependency_overrides[get_api_key]
-
     assert response.status_code == 202
     mock_task.send.assert_called_once()
 
 
-# 測試 API 金鑰保護 (這些測試不需要覆寫 get_api_key)
+# --- API 金鑰保護 ---
+
+
 def test_post_endpoints_no_api_key(client: TestClient):
-    """測試在沒有提供 API 金鑰時，POST 端點應返回 403"""
     response_run = client.post(
         "/api/run_scraper", json={"mode": "daily", "date": "2025-01-01"}
     )
     assert response_run.status_code == 403
-
     response_update = client.post("/api/update_schedule")
     assert response_update.status_code == 403
 
 
 def test_post_endpoints_wrong_api_key(client: TestClient):
-    """測試在提供錯誤 API 金鑰時，POST 端點應返回 403"""
     headers = {"X-API-Key": "wrong-key"}
     response_run = client.post(
         "/api/run_scraper",
@@ -135,6 +388,5 @@ def test_post_endpoints_wrong_api_key(client: TestClient):
         json={"mode": "daily", "date": "2025-01-01"},
     )
     assert response_run.status_code == 403
-
     response_update = client.post("/api/update_schedule", headers=headers)
     assert response_update.status_code == 403

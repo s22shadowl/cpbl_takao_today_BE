@@ -331,3 +331,19 @@ class PlayerSeasonStatsHistory(PlayerSeasonStatsBase):
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# 【新增】定義壘上情境的 Enum，供 API 參數使用
+class RunnersSituation(str, enum.Enum):
+    BASES_EMPTY = "bases_empty"
+    SCORING_POSITION = "scoring_position"
+    BASES_LOADED = "bases_loaded"
+
+
+# 【新增】定義「最後一轟」API 的回應模型
+class LastHomerunStats(BaseModel):
+    last_homerun: AtBatDetail
+    game_date: datetime.date
+    days_since: int
+    games_since: int
+    at_bats_since: int
