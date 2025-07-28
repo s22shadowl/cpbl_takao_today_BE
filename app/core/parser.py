@@ -10,6 +10,15 @@ from app.config import settings
 from app.models import AtBatResultType
 from typing import List, Optional
 
+# 【新增】導入用於解析的關鍵字常數
+from app.core.constants import (
+    PARSER_ON_BASE_KEYWORDS,
+    PARSER_OUT_KEYWORDS,
+    PARSER_SACRIFICE_KEYWORDS,
+    PARSER_FC_KEYWORDS,
+    PARSER_ERROR_KEYWORDS,
+)
+
 
 def _determine_result_details(description: str) -> dict:
     """
@@ -24,15 +33,16 @@ def _determine_result_details(description: str) -> dict:
     if score_match:
         result["runs_scored_on_play"] = int(score_match.group(1))
 
-    if "犧牲" in description:
+    # 【修改】使用從 constants.py 導入的常數進行判斷
+    if any(k in description for k in PARSER_SACRIFICE_KEYWORDS):
         result["result_type"] = AtBatResultType.SACRIFICE
-    elif "野手選擇" in description:
+    elif any(k in description for k in PARSER_FC_KEYWORDS):
         result["result_type"] = AtBatResultType.FIELDERS_CHOICE
-    elif "失誤" in description:
+    elif any(k in description for k in PARSER_ERROR_KEYWORDS):
         result["result_type"] = AtBatResultType.ERROR
-    elif any(k in description for k in ["安打", "保送", "四壞", "觸身", "全壘打"]):
+    elif any(k in description for k in PARSER_ON_BASE_KEYWORDS):
         result["result_type"] = AtBatResultType.ON_BASE
-    elif any(k in description for k in ["三振", "出局", "雙殺", "封殺"]):
+    elif any(k in description for k in PARSER_OUT_KEYWORDS):
         result["result_type"] = AtBatResultType.OUT
 
     return result

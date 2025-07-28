@@ -5,7 +5,7 @@
 """
 
 # ==============================================================================
-# 打席結果分類 (At-Bat Result Categories)
+# 打席結果分類 (At-Bat Result Categories) - 來源: Box Score 短摘要
 # 使用 set 以利於快速查詢與集合運算。
 # ==============================================================================
 
@@ -59,7 +59,6 @@ OUTS_IN_PLAY = {
 ALL_OUTS = STRIKEOUTS | GIDP | OUTS_IN_PLAY
 
 # --- 其他上壘類型 (Other On-Base Events) ---
-# 這些事件在計算 OBP 時通常不被視為成功上壘，但在某些分析中可能需要
 FIELDERS_CHOICE = {"野選"}
 ERRORS = {
     "投失",
@@ -79,13 +78,25 @@ ERRORS = {
 
 # ==============================================================================
 # 邏輯組合分類 (Logical Combined Categories)
-# 透過集合運算，組合出用於特定分析的分類。
 # ==============================================================================
 
 # --- 定義 B: 連續上壘 (Consecutive On Base) ---
-# 這是計算 OBP (上壘率) 的基礎，包含安打與保送。
 ON_BASE_RESULTS = HITS | WALKS
 
 # --- 定義 C: 連續推進 (Consecutive Advancements) ---
-# 包含成功上壘與犧牲打。
 ADVANCEMENT_RESULTS = ON_BASE_RESULTS | SACRIFICES
+
+
+# ==============================================================================
+# 【新增】關鍵字定義 (用於解析完整文字描述) - 來源: Live 直播文字
+# ==============================================================================
+
+# --- 用於 parser._determine_result_details ---
+PARSER_ON_BASE_KEYWORDS = {"安打", "保送", "四壞", "觸身", "全壘打"}
+PARSER_OUT_KEYWORDS = {"三振", "出局", "雙殺", "封殺"}
+PARSER_SACRIFICE_KEYWORDS = {"犧牲"}
+PARSER_FC_KEYWORDS = {"野手選擇"}
+PARSER_ERROR_KEYWORDS = {"失誤"}
+
+# --- 用於 state_machine._update_runners_state ---
+STATE_MACHINE_HITTER_TO_FIRST_KEYWORDS = {"一壘安打", "內野安打", "四壞球", "觸身死球"}

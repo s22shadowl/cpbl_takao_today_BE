@@ -1,4 +1,9 @@
+# app/utils/state_machine.py
+
 import re
+
+# 【新增】導入用於狀態機的關鍵字常數
+from app.core.constants import STATE_MACHINE_HITTER_TO_FIRST_KEYWORDS
 
 
 def _update_outs_count(description, current_outs):
@@ -40,9 +45,9 @@ def _update_runners_state(current_runners, hitter_name, description):
             runners[2] = hitter_name
         else:
             runners[0] = hitter_name
+    # 【修改】使用從 constants.py 導入的常數進行判斷
     elif any(
-        keyword in description
-        for keyword in ["一壘安打", "內野安打", "四壞球", "觸身死球"]
+        keyword in description for keyword in STATE_MACHINE_HITTER_TO_FIRST_KEYWORDS
     ):
         runners[0] = hitter_name
     elif "二壘安打" in description:
