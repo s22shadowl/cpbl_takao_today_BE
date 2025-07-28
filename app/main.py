@@ -205,6 +205,20 @@ def get_on_base_streaks(
     return streaks
 
 
+@app.get(
+    "/api/analysis/players/{player_name}/ibb-impact",
+    response_model=List[models.IbbImpactResult],
+    tags=["Analysis"],
+    summary="【新增】分析故意四壞的失分影響",
+)
+def get_ibb_impact_analysis(player_name: str, db: Session = Depends(get_db)):
+    """
+    查詢指定球員被故意四壞後，該半局後續所有打席的紀錄與總失分。
+    """
+    results = db_actions.analyze_ibb_impact(db, player_name=player_name)
+    return results
+
+
 # --- 手動觸發任務的端點 ---
 
 

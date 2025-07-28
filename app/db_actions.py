@@ -1,3 +1,5 @@
+# app/db_actions.py
+
 import logging
 import datetime
 from typing import List, Dict, Any, Optional
@@ -7,7 +9,7 @@ from sqlalchemy.inspection import inspect
 from sqlalchemy import func, or_, select
 
 from . import models
-from .config import settings  # 【新增】導入 settings 以取得連線定義
+from .config import settings
 
 
 def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
@@ -563,3 +565,90 @@ def find_on_base_streaks(
         result_models.append(streak_model)
 
     return result_models
+
+
+def analyze_ibb_impact(db: Session, player_name: str) -> List[models.IbbImpactResult]:
+    """
+    【新增】分析指定球員被故意四壞後，對該半局總失分的影響。
+    """
+    # 1. 找出所有與該球員相關的比賽中的所有打席
+    game_ids_subquery = (
+        select(models.PlayerGameSummaryDB.game_id)
+        .where(models.PlayerGameSummaryDB.player_name == player_name)
+        .distinct()
+    )
+
+    all_related_at_bats = (
+        db.query(models.AtBatDetailDB)
+        .join(models.PlayerGameSummaryDB)
+        .filter(models.PlayerGameSummaryDB.game_id.in_(game_ids_subquery))
+        .options(
+            joinedload(models.AtBatDetailDB.player_summary).joinedload(
+                models.PlayerGameSummaryDB.game
+            )
+        )
+        .order_by(
+            models.PlayerGameSummaryDB.game_id,
+            models.AtBatDetailDB.inning,
+            models.AtBatDetailDB.id,  # 使用 id 作為最終排序依據
+        )
+        .all()
+    )
+
+    results = []
+    # 2. 在 Python 中遍歷所有打席，找出 IBB 事件並計算後續影響
+    for i, at_bat in enumerate(all_related_at_bats):
+        # 【修改】增加對 None 的檢查，避免 TypeError
+        is_ibb = (
+            at_bat.result_description_full
+            and "故意四壞" in at_bat.result_description_full
+        )
+        is_target_player = at_bat.player_summary.player_name == player_name
+
+        if is_ibb and is_target_player:
+            ibb_event = at_bat
+            subsequent_at_bats = []
+            runs_scored_after = 0
+
+            # 往後查找同一個半局的打席
+            for next_ab in all_related_at_bats[i + 1 :]:
+                if (
+                    next_ab.player_summary.game_id == ibb_event.player_summary.game_id
+                    and next_ab.inning == ibb_event.inning
+                ):
+                    subsequent_at_bats.append(next_ab)
+                    runs_scored_after += next_ab.runs_scored_on_play
+                else:
+                    # 進入下一局或下一場比賽，結束查找
+                    break
+
+            # 3. 將結果組裝成 Pydantic 模型
+            game = ibb_event.player_summary.game
+
+            ibb_model = models.AtBatDetailForStreak(
+                player_name=ibb_event.player_summary.player_name,
+                batting_order=ibb_event.player_summary.batting_order,
+                **ibb_event.__dict__,
+            )
+
+            subsequent_models = [
+                models.AtBatDetailForStreak(
+                    player_name=ab.player_summary.player_name,
+                    batting_order=ab.player_summary.batting_order,
+                    **ab.__dict__,
+                )
+                for ab in subsequent_at_bats
+            ]
+
+            impact_result = models.IbbImpactResult(
+                game_id=game.id,
+                game_date=game.game_date,
+                inning=ibb_event.inning,
+                intentional_walk=ibb_model,
+                subsequent_at_bats=subsequent_models,
+                runs_scored_after_ibb=runs_scored_after,
+            )
+            results.append(impact_result)
+
+    # 由於查詢是升序的，為了讓 API 回傳最新的在前面，這裡進行反轉
+    return results[::-1]

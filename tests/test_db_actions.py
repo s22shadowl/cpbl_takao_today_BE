@@ -417,7 +417,7 @@ def test_find_next_at_bats_after_ibb(db_session):
     assert result_earlier["next_at_bat"].result_short == "三振"
 
 
-# --- 【新增】「連線」功能 db_actions 函式測試 ---
+# --- 「連線」功能 db_actions 函式測試 ---
 
 
 @pytest.fixture(scope="function")
@@ -608,3 +608,101 @@ def test_find_on_base_streaks_no_result(db_session: Session, setup_streak_test_d
         lineup_positions=None,
     )
     assert len(streaks) == 0
+
+
+# --- 【新增】「IBB 影響」功能 db_actions 函式測試 ---
+
+
+@pytest.fixture(scope="function")
+def setup_ibb_impact_test_data(db_session: Session):
+    """建立一個用於測試「IBB 影響」功能的比賽場景。"""
+    game = models.GameResultDB(
+        cpbl_game_id="IBB_IMPACT_TEST_GAME",
+        game_date=datetime.date(2025, 8, 16),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    summaries = {}
+    players = [("A", "1"), ("B", "2"), ("C", "3"), ("D", "4")]
+    for name, order in players:
+        summary = models.PlayerGameSummaryDB(
+            game_id=game.id,
+            player_name=f"影響者{name}",
+            batting_order=order,
+            team_name="測試隊",
+        )
+        db_session.add(summary)
+        summaries[name] = summary
+    db_session.flush()
+
+    # 建立打席紀錄
+    db_session.add_all(
+        [
+            # 第 1 局: IBB 後續得 3 分
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id,
+                inning=1,
+                result_short="一安",
+                runs_scored_on_play=0,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=1,
+                result_description_full="故意四壞",
+                runs_scored_on_play=0,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id,
+                inning=1,
+                result_short="二安",
+                runs_scored_on_play=1,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["D"].id,
+                inning=1,
+                result_short="全打",
+                runs_scored_on_play=2,
+            ),
+            # 第 2 局: IBB 後續得 0 分
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id, inning=2, result_short="滾地"
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=2,
+                result_description_full="故意四壞",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id, inning=2, result_short="三振"
+            ),
+        ]
+    )
+    db_session.commit()
+    return game
+
+
+def test_analyze_ibb_impact(db_session: Session, setup_ibb_impact_test_data):
+    """直接測試 db_actions 的 analyze_ibb_impact 函式。"""
+    results = db_actions.analyze_ibb_impact(db=db_session, player_name="影響者B")
+
+    assert len(results) == 2
+
+    # API 回傳結果是倒序的，所以 results[0] 是最新的事件 (第 2 局)
+    result_inning2 = results[0]
+    assert result_inning2.inning == 2
+    assert result_inning2.intentional_walk.player_name == "影響者B"
+    assert len(result_inning2.subsequent_at_bats) == 1
+    assert result_inning2.subsequent_at_bats[0].player_name == "影響者C"
+    assert result_inning2.runs_scored_after_ibb == 0
+
+    # results[1] 是較早的事件 (第 1 局)
+    result_inning1 = results[1]
+    assert result_inning1.inning == 1
+    assert result_inning1.intentional_walk.player_name == "影響者B"
+    assert len(result_inning1.subsequent_at_bats) == 2
+    assert result_inning1.subsequent_at_bats[0].player_name == "影響者C"
+    assert result_inning1.subsequent_at_bats[1].player_name == "影響者D"
+    assert result_inning1.runs_scored_after_ibb == 3  # 1 (二安) + 2 (全打)

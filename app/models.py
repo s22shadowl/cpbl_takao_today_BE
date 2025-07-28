@@ -352,7 +352,7 @@ class NextAtBatResult(BaseModel):
 
 
 # ==============================================================================
-# 3. 【新增】「連線」功能專用 Pydantic 模型
+# 3. 「連線」功能專用 Pydantic 模型
 # ==============================================================================
 
 
@@ -380,3 +380,29 @@ class OnBaseStreak(BaseModel):
     at_bats: List[AtBatDetailForStreak] = Field(
         ..., description="組成此次連線的所有打席詳細紀錄"
     )
+
+
+# ==============================================================================
+# 4. 【新增】「故意四壞影響」功能專用 Pydantic 模型
+# ==============================================================================
+
+
+class IbbImpactResult(BaseModel):
+    """
+    代表一次故意四壞事件及其後續影響的模型。
+    """
+
+    game_id: int = Field(..., description="比賽的唯一 ID")
+    game_date: datetime.date = Field(..., description="比賽日期")
+    inning: int = Field(..., description="事件發生的局數")
+    intentional_walk: AtBatDetailForStreak = Field(
+        ..., description="故意四壞的打席紀錄"
+    )
+    subsequent_at_bats: List[AtBatDetailForStreak] = Field(
+        ..., description="該半局後續的所有打席"
+    )
+    runs_scored_after_ibb: int = Field(
+        ..., description="在 IBB 之後，該半局得到的總分數"
+    )
+
+    model_config = ConfigDict(from_attributes=True)
