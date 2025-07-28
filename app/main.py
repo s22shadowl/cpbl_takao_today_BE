@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
-from app import models, db_actions
+from app import models, db_actions, schemas
 from app.db import get_db
 from app.config import settings
 from app.logging_config import setup_logging
@@ -65,7 +65,7 @@ class ScraperRequest(BaseModel):
 # --- API 端點 ---
 
 
-@app.get("/api/games/{game_date}", response_model=List[models.GameResult])
+@app.get("/api/games/{game_date}", response_model=List[schemas.GameResult])
 def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
     try:
         parsed_date = datetime.datetime.strptime(game_date, "%Y-%m-%d").date()
@@ -82,7 +82,7 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
     return games
 
 
-@app.get("/api/games/details/{game_id}", response_model=models.GameResultWithDetails)
+@app.get("/api/games/details/{game_id}", response_model=schemas.GameResultWithDetails)
 def get_game_details(game_id: int, db: Session = Depends(get_db)):
     game = db_actions.get_game_with_details(db, game_id)
     if not game:
@@ -92,7 +92,7 @@ def get_game_details(game_id: int, db: Session = Depends(get_db)):
 
 @app.get(
     "/api/players/{player_name}/stats/history",
-    response_model=List[models.PlayerSeasonStatsHistory],
+    response_model=List[schemas.PlayerSeasonStatsHistory],
 )
 def get_player_stats_history(player_name: str, db: Session = Depends(get_db)):
     history = (
@@ -111,7 +111,7 @@ def get_player_stats_history(player_name: str, db: Session = Depends(get_db)):
 # --- 進階分析 API 端點 ---
 
 
-@app.get("/api/analysis/games-with-players", response_model=List[models.GameResult])
+@app.get("/api/analysis/games-with-players", response_model=List[schemas.GameResult])
 def get_games_with_players(
     players: List[str] = Query(..., description="球員姓名列表"),
     db: Session = Depends(get_db),
@@ -123,7 +123,7 @@ def get_games_with_players(
 
 @app.get(
     "/api/analysis/players/{player_name}/last-homerun",
-    response_model=models.LastHomerunStats,
+    response_model=schemas.LastHomerunStats,
 )
 def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
     """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
@@ -137,7 +137,7 @@ def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
 
 @app.get(
     "/api/analysis/players/{player_name}/situational-at-bats",
-    response_model=List[models.AtBatDetail],
+    response_model=List[schemas.AtBatDetail],
 )
 def get_situational_at_bats(
     player_name: str, situation: models.RunnersSituation, db: Session = Depends(get_db)
@@ -148,7 +148,7 @@ def get_situational_at_bats(
 
 
 @app.get(
-    "/api/analysis/positions/{position}", response_model=List[models.PlayerGameSummary]
+    "/api/analysis/positions/{position}", response_model=List[schemas.PlayerGameSummary]
 )
 def get_position_records(position: str, db: Session = Depends(get_db)):
     """查詢指定守備位置的所有球員出賽紀錄。"""
@@ -158,7 +158,7 @@ def get_position_records(position: str, db: Session = Depends(get_db)):
 
 @app.get(
     "/api/analysis/players/{player_name}/after-ibb",
-    response_model=List[models.NextAtBatResult],
+    response_model=List[schemas.NextAtBatResult],
 )
 def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
     """查詢指定球員被故意四壞後，下一位打者的打席結果。"""
@@ -168,7 +168,7 @@ def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
 
 @app.get(
     "/api/analysis/streaks",
-    response_model=List[models.OnBaseStreak],
+    response_model=List[schemas.OnBaseStreak],
     tags=["Analysis"],
     summary="查詢「連線」紀錄",
 )
@@ -207,7 +207,7 @@ def get_on_base_streaks(
 
 @app.get(
     "/api/analysis/players/{player_name}/ibb-impact",
-    response_model=List[models.IbbImpactResult],
+    response_model=List[schemas.IbbImpactResult],
     tags=["Analysis"],
     summary="【新增】分析故意四壞的失分影響",
 )

@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy.inspection import inspect
 from sqlalchemy import func, or_, select
 
+from app import schemas
+
 from . import models
 from .config import settings
 
@@ -433,7 +435,7 @@ def find_on_base_streaks(
     min_length: int,
     player_names: Optional[List[str]],
     lineup_positions: Optional[List[int]],
-) -> List[models.OnBaseStreak]:
+) -> List[schemas.OnBaseStreak]:
     """
     【重構】查詢符合「連線」定義的打席序列。
     根據是否提供特定球員/棒次，採用不同策略以優化效能。
@@ -546,7 +548,7 @@ def find_on_base_streaks(
             continue
         game = streak[0].player_summary.game
         at_bat_models = [
-            models.AtBatDetailForStreak(
+            schemas.AtBatDetailForStreak(
                 player_name=ab.player_summary.player_name,
                 batting_order=ab.player_summary.batting_order,
                 **ab.__dict__,
@@ -554,7 +556,7 @@ def find_on_base_streaks(
             for ab in streak
         ]
 
-        streak_model = models.OnBaseStreak(
+        streak_model = schemas.OnBaseStreak(
             game_id=game.id,
             game_date=game.game_date,
             inning=streak[0].inning,
@@ -567,7 +569,7 @@ def find_on_base_streaks(
     return result_models
 
 
-def analyze_ibb_impact(db: Session, player_name: str) -> List[models.IbbImpactResult]:
+def analyze_ibb_impact(db: Session, player_name: str) -> List[schemas.IbbImpactResult]:
     """
     【新增】分析指定球員被故意四壞後，對該半局總失分的影響。
     """
@@ -625,14 +627,14 @@ def analyze_ibb_impact(db: Session, player_name: str) -> List[models.IbbImpactRe
             # 3. 將結果組裝成 Pydantic 模型
             game = ibb_event.player_summary.game
 
-            ibb_model = models.AtBatDetailForStreak(
+            ibb_model = schemas.AtBatDetailForStreak(
                 player_name=ibb_event.player_summary.player_name,
                 batting_order=ibb_event.player_summary.batting_order,
                 **ibb_event.__dict__,
             )
 
             subsequent_models = [
-                models.AtBatDetailForStreak(
+                schemas.AtBatDetailForStreak(
                     player_name=ab.player_summary.player_name,
                     batting_order=ab.player_summary.batting_order,
                     **ab.__dict__,
@@ -640,7 +642,7 @@ def analyze_ibb_impact(db: Session, player_name: str) -> List[models.IbbImpactRe
                 for ab in subsequent_at_bats
             ]
 
-            impact_result = models.IbbImpactResult(
+            impact_result = schemas.IbbImpactResult(
                 game_id=game.id,
                 game_date=game.game_date,
                 inning=ibb_event.inning,
