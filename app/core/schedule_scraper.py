@@ -10,8 +10,8 @@ from bs4 import BeautifulSoup
 
 # 匯入新的 settings 物件和 SessionLocal
 from app.config import settings
+from app.crud import games
 from app.db import SessionLocal
-from app import db_actions
 
 # 使用標準方式取得 logger
 logger = logging.getLogger(__name__)
@@ -146,8 +146,7 @@ def scrape_cpbl_schedule(
         if games_to_save:
             db = SessionLocal()
             try:
-                # 【核心修正】: 將 db 操作放入 try...except...finally 區塊
-                db_actions.update_game_schedules(db, games_to_save)
+                games.update_game_schedules(db, games_to_save)
                 db.commit()
                 logger.info(f"成功提交 {len(games_to_save)} 筆賽程到資料庫。")
             except Exception as e:

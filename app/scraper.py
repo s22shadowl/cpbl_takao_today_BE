@@ -7,12 +7,12 @@ from playwright.sync_api import sync_playwright, expect
 import re
 from typing import List, Optional
 
+from app.crud import players
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 from app.config import settings, TEAM_CLUB_CODES
 from app.core import fetcher
 from app.core import parser as html_parser
-from app import db_actions
 from app.db import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ def scrape_and_store_season_stats():
 
     db = SessionLocal()
     try:
-        db_actions.store_player_season_stats_and_history(db, season_stats_list)
+        players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
     except Exception as e:
         logger.error(f"儲存球季累積數據時發生錯誤，交易已復原: {e}", exc_info=True)
@@ -82,7 +82,7 @@ def _process_filtered_games(
                 logger.info(
                     f"[E2E] 正在儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
                 )
-                game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
+                game_id_in_db = players.store_game_and_get_id(db, game_info)
                 if not game_id_in_db:
                     logger.warning(
                         f"[E2E] 無法儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
@@ -106,7 +106,7 @@ def _process_filtered_games(
                         ],
                     }
                 ]
-                db_actions.store_player_game_data(db, game_id_in_db, fake_player_data)
+                players.store_player_game_data(db, game_id_in_db, fake_player_data)
 
             db.commit()
             logger.info("[E2E] 成功提交所有假的比賽資料。")
@@ -142,7 +142,7 @@ def _process_filtered_games(
                         continue
 
                 logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-                game_id_in_db = db_actions.store_game_and_get_id(db, game_info)
+                game_id_in_db = players.store_game_and_get_id(db, game_info)
                 if not game_id_in_db:
                     continue
                 box_score_url = game_info.get("box_score_url")
@@ -283,7 +283,7 @@ def _process_filtered_games(
                             merged_at_bat.update(detail_match)
                         player_data["at_bats_details"].append(merged_at_bat)
 
-                db_actions.store_player_game_data(db, game_id_in_db, all_players_data)
+                players.store_player_game_data(db, game_id_in_db, all_players_data)
 
                 db.commit()
                 logger.info(

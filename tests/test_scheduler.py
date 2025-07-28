@@ -37,10 +37,10 @@ def mock_scheduler_and_deps(mocker):
 
     # 4. 模擬資料庫相關的依賴
     mocker.patch("app.scheduler.SessionLocal")
-    mock_db_actions = mocker.patch("app.scheduler.db_actions")
+    mock_db_games = mocker.patch("app.scheduler.games")
 
     # 5. 回傳我們需要的 mock 物件
-    return {"db_actions": mock_db_actions, "scheduler": mock_scheduler}
+    return {"games": mock_db_games, "scheduler": mock_scheduler}
 
 
 # --- 測試 _schedule_daily_scraper ---
@@ -119,7 +119,7 @@ def test_setup_scheduler_default_behavior(
     mock_datetime, mock_schedule_func, mock_scheduler_and_deps
 ):
     """測試 setup_scheduler 預設行為 (只排程今天及未來的比賽)。"""
-    mock_db_actions = mock_scheduler_and_deps["db_actions"]
+    mock_games = mock_scheduler_and_deps["games"]
     mock_scheduler = mock_scheduler_and_deps["scheduler"]
 
     mock_datetime.now.return_value = datetime(
@@ -137,7 +137,7 @@ def test_setup_scheduler_default_behavior(
             game_date=date(2025, 7, 2), game_time="18:35", matchup="未來的比賽"
         ),
     ]
-    mock_db_actions.get_all_schedules.return_value = fake_schedules
+    mock_games.get_all_schedules.return_value = fake_schedules
 
     app_scheduler.setup_scheduler()
 
@@ -149,7 +149,7 @@ def test_setup_scheduler_default_behavior(
 @patch("app.scheduler._schedule_daily_scraper")
 def test_setup_scheduler_scrape_all_season(mock_schedule_func, mock_scheduler_and_deps):
     """測試 setup_scheduler 在 scrape_all_season=True 時的行為。"""
-    mock_db_actions = mock_scheduler_and_deps["db_actions"]
+    mock_games = mock_scheduler_and_deps["games"]
 
     fake_schedules = [
         models.GameSchedule(
@@ -159,7 +159,7 @@ def test_setup_scheduler_scrape_all_season(mock_schedule_func, mock_scheduler_an
             game_date=date(2025, 7, 1), game_time="18:35", matchup="今天的比賽"
         ),
     ]
-    mock_db_actions.get_all_schedules.return_value = fake_schedules
+    mock_games.get_all_schedules.return_value = fake_schedules
 
     app_scheduler.setup_scheduler(scrape_all_season=True)
 
@@ -168,13 +168,13 @@ def test_setup_scheduler_scrape_all_season(mock_schedule_func, mock_scheduler_an
 
 def test_setup_scheduler_no_games(mock_scheduler_and_deps):
     """測試 setup_scheduler 在資料庫中沒有賽程時的行為。"""
-    mock_db_actions = mock_scheduler_and_deps["db_actions"]
+    mock_games = mock_scheduler_and_deps["games"]
     mock_scheduler = mock_scheduler_and_deps["scheduler"]
 
-    mock_db_actions.get_all_schedules.return_value = []
+    mock_games.get_all_schedules.return_value = []
 
     app_scheduler.setup_scheduler()
 
-    mock_db_actions.get_all_schedules.assert_called_once()
+    mock_games.get_all_schedules.assert_called_once()
     mock_scheduler.add_job.assert_not_called()
     mock_scheduler.start.assert_called_once()

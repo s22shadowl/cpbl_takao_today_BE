@@ -49,7 +49,7 @@ def mock_dependencies(mocker):
     mock_page = mock_browser.new_page.return_value
 
     # 模擬資料庫相關操作
-    mock_db_actions = mocker.patch("app.core.schedule_scraper.db_actions")
+    mock_games = mocker.patch("app.core.schedule_scraper.games")
     mock_session_local = mocker.patch("app.core.schedule_scraper.SessionLocal")
     mock_session = MagicMock()
     mock_session_local.return_value = mock_session
@@ -63,7 +63,7 @@ def mock_dependencies(mocker):
     return {
         "page": mock_page,
         "browser": mock_browser,
-        "db_actions": mock_db_actions,
+        "games": mock_games,
         "session": mock_session,
         "datetime": mock_datetime,
     }
@@ -75,7 +75,7 @@ def mock_dependencies(mocker):
 def test_scrape_with_include_past_games_true(mock_dependencies):
     """測試當 include_past_games=True 時，會儲存所有爬取到的比賽。"""
     mock_page = mock_dependencies["page"]
-    mock_db_actions = mock_dependencies["db_actions"]
+    mock_games = mock_dependencies["games"]
     mock_session = mock_dependencies["session"]
 
     mock_page.content.return_value = SAMPLE_HTML_MULTIPLE_DATES
@@ -104,7 +104,7 @@ def test_scrape_with_include_past_games_true(mock_dependencies):
     result = schedule_scraper.scrape_cpbl_schedule(2025, 6, 7, include_past_games=True)
 
     assert result == expected_all_games
-    mock_db_actions.update_game_schedules.assert_called_once_with(
+    mock_games.update_game_schedules.assert_called_once_with(
         mock_session, expected_all_games
     )
     mock_session.close.assert_called_once()
@@ -113,7 +113,7 @@ def test_scrape_with_include_past_games_true(mock_dependencies):
 def test_scrape_with_default_filtering(mock_dependencies):
     """測試預設行為 (include_past_games=False)，只會儲存今天及未來的比賽。"""
     mock_page = mock_dependencies["page"]
-    mock_db_actions = mock_dependencies["db_actions"]
+    mock_games = mock_dependencies["games"]
     mock_datetime = mock_dependencies["datetime"]
     mock_session = mock_dependencies["session"]
 
@@ -141,7 +141,7 @@ def test_scrape_with_default_filtering(mock_dependencies):
     result = schedule_scraper.scrape_cpbl_schedule(2025, 6, 7)
 
     assert result == expected_future_games
-    mock_db_actions.update_game_schedules.assert_called_once_with(
+    mock_games.update_game_schedules.assert_called_once_with(
         mock_session, expected_future_games
     )
     mock_session.close.assert_called_once()
@@ -150,7 +150,7 @@ def test_scrape_with_default_filtering(mock_dependencies):
 def test_scrape_schedule_no_target_team_found(mock_dependencies):
     """測試當爬取到的賽程中不包含目標球隊時的行為。"""
     mock_page = mock_dependencies["page"]
-    mock_db_actions = mock_dependencies["db_actions"]
+    mock_games = mock_dependencies["games"]
 
     html_no_match = """
     <html><body><div class="ScheduleTableList"><tbody>
@@ -166,7 +166,7 @@ def test_scrape_schedule_no_target_team_found(mock_dependencies):
     result = schedule_scraper.scrape_cpbl_schedule(2025, 7, 7)
 
     assert result == []
-    mock_db_actions.update_game_schedules.assert_not_called()
+    mock_games.update_game_schedules.assert_not_called()
 
 
 def test_scrape_schedule_page_load_timeout(mock_dependencies):
@@ -185,18 +185,18 @@ def test_scrape_schedule_page_load_timeout(mock_dependencies):
 def test_scrape_schedule_db_error_handles_finally(mock_dependencies):
     """測試當資料庫寫入失敗時，是否能確保交易被復原且連線被關閉。"""
     mock_page = mock_dependencies["page"]
-    mock_db_actions = mock_dependencies["db_actions"]
+    mock_games = mock_dependencies["games"]
     mock_session = mock_dependencies["session"]
 
     mock_page.content.return_value = SAMPLE_HTML_MULTIPLE_DATES
-    # 模擬 db_actions 在被呼叫時拋出錯誤
-    mock_db_actions.update_game_schedules.side_effect = Exception("DB write error")
+    # 模擬 games 在被呼叫時拋出錯誤
+    mock_games.update_game_schedules.side_effect = Exception("DB write error")
 
     # 執行函式，並預期它不會向外拋出錯誤 (因為已被 try/except 捕捉)
     schedule_scraper.scrape_cpbl_schedule(2025, 6, 7, include_past_games=True)
 
-    # 斷言：db_actions 被呼叫，但 rollback 也被呼叫，最後連線被關閉
-    mock_db_actions.update_game_schedules.assert_called_once()
+    # 斷言：games 被呼叫，但 rollback 也被呼叫，最後連線被關閉
+    mock_games.update_game_schedules.assert_called_once()
     mock_session.rollback.assert_called_once()
     mock_session.commit.assert_not_called()  # 確保沒有提交
     mock_session.close.assert_called_once()

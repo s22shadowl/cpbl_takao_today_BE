@@ -7,8 +7,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.date import DateTrigger
 
 # 修正：匯入新的 SQLAlchemy Session 工廠
+from app.crud import games
 from app.db import SessionLocal
-from app import db_actions
 
 # 【新】從 tasks 中匯入任務，因為排程器現在需要呼叫 Dramatiq 任務
 from app.tasks import task_scrape_single_day
@@ -75,7 +75,7 @@ def setup_scheduler(scrape_all_season: bool = False):
 
     db = SessionLocal()
     try:
-        schedules = db_actions.get_all_schedules(db)
+        schedules = games.get_all_schedules(db)
     finally:
         db.close()
 

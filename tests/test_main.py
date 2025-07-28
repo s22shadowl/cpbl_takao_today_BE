@@ -6,8 +6,9 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.crud import games
 from app.main import app, get_api_key
-from app import db_actions, models
+from app import models
 
 # --- 輔助函式 (Overrides) ---
 
@@ -106,7 +107,7 @@ def test_get_games_by_date_success(client: TestClient, db_session: Session):
         "away_team": "測試客隊",
         "status": "已完成",
     }
-    db_actions.store_game_and_get_id(db_session, game_info_1)
+    games.store_game_and_get_id(db_session, game_info_1)
     db_session.commit()
 
     response = client.get("/api/games/2025-06-21")
@@ -304,7 +305,7 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
     db_session.add_all([hr1, hr2])
     db_session.commit()
 
-    with patch("app.db_actions.datetime.date") as mock_date:
+    with patch("app.crud.analysis.datetime.date") as mock_date:
         mock_date.today.return_value = freezed_today
         response = client.get("/api/analysis/players/轟炸基/last-homerun")
 

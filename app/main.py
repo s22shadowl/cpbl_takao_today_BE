@@ -12,7 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from sqlalchemy.orm import Session
 
-from app import models, db_actions, schemas
+from app import models, schemas
+from app.crud import games, analysis
 from app.db import get_db
 from app.config import settings
 from app.logging_config import setup_logging
@@ -84,7 +85,7 @@ def get_games_by_date(game_date: str, db: Session = Depends(get_db)):
 
 @app.get("/api/games/details/{game_id}", response_model=schemas.GameResultWithDetails)
 def get_game_details(game_id: int, db: Session = Depends(get_db)):
-    game = db_actions.get_game_with_details(db, game_id)
+    game = games.get_game_with_details(db, game_id)
     if not game:
         raise HTTPException(status_code=404, detail=f"找不到 ID 為 {game_id} 的比賽。")
     return game
@@ -117,7 +118,7 @@ def get_games_with_players(
     db: Session = Depends(get_db),
 ):
     """查詢指定的所有球員同時出賽的比賽列表。"""
-    games = db_actions.find_games_with_players(db, players)
+    games = analysis.find_games_with_players(db, players)
     return games
 
 
@@ -127,7 +128,7 @@ def get_games_with_players(
 )
 def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
     """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
-    stats = db_actions.get_stats_since_last_homerun(db, player_name)
+    stats = analysis.get_stats_since_last_homerun(db, player_name)
     if not stats:
         raise HTTPException(
             status_code=404, detail=f"找不到球員 {player_name} 的全壘打紀錄。"
@@ -143,7 +144,7 @@ def get_situational_at_bats(
     player_name: str, situation: models.RunnersSituation, db: Session = Depends(get_db)
 ):
     """根據指定的壘上情境，查詢球員的打席紀錄。"""
-    at_bats = db_actions.find_at_bats_in_situation(db, player_name, situation)
+    at_bats = analysis.find_at_bats_in_situation(db, player_name, situation)
     return at_bats
 
 
@@ -152,7 +153,7 @@ def get_situational_at_bats(
 )
 def get_position_records(position: str, db: Session = Depends(get_db)):
     """查詢指定守備位置的所有球員出賽紀錄。"""
-    summaries = db_actions.get_summaries_by_position(db, position)
+    summaries = analysis.get_summaries_by_position(db, position)
     return summaries
 
 
@@ -162,7 +163,7 @@ def get_position_records(position: str, db: Session = Depends(get_db)):
 )
 def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
     """查詢指定球員被故意四壞後，下一位打者的打席結果。"""
-    results = db_actions.find_next_at_bats_after_ibb(db, player_name)
+    results = analysis.find_next_at_bats_after_ibb(db, player_name)
     return results
 
 
@@ -195,7 +196,7 @@ def get_on_base_streaks(
             detail="Cannot specify both player_names and lineup_positions at the same time.",
         )
 
-    streaks = db_actions.find_on_base_streaks(
+    streaks = analysis.find_on_base_streaks(
         db=db,
         definition_name=definition_name,
         min_length=min_length,
@@ -215,7 +216,7 @@ def get_ibb_impact_analysis(player_name: str, db: Session = Depends(get_db)):
     """
     查詢指定球員被故意四壞後，該半局後續所有打席的紀錄與總失分。
     """
-    results = db_actions.analyze_ibb_impact(db, player_name=player_name)
+    results = analysis.analyze_ibb_impact(db, player_name=player_name)
     return results
 
 
