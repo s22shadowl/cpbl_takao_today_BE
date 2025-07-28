@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, List
 import datetime
 import enum
@@ -344,9 +344,39 @@ class LastHomerunStats(BaseModel):
     at_bats_since: int
 
 
-# 【修正】將 NextAtBatResult 模型定義補上
 class NextAtBatResult(BaseModel):
     intentional_walk: AtBatDetail
     next_at_bat: Optional[AtBatDetail] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==============================================================================
+# 3. 【新增】「連線」功能專用 Pydantic 模型
+# ==============================================================================
+
+
+class AtBatDetailForStreak(AtBatDetail):
+    """
+    為「連線」功能擴充的打席模型，額外包含打者姓名與棒次資訊。
+    """
+
+    player_name: str = Field(..., description="打者姓名")
+    batting_order: Optional[str] = Field(None, description="棒次")
+
+
+class OnBaseStreak(BaseModel):
+    """
+    代表一次完整「連線」事件的模型。
+    """
+
+    game_id: int = Field(..., description="比賽的唯一 ID")
+    game_date: datetime.date = Field(..., description="比賽日期")
+    inning: int = Field(..., description="事件發生的局數")
+    streak_length: int = Field(..., description="此次連線的人次長度")
+    runs_scored_during_streak: int = Field(
+        ..., description="在這次連線期間得到的總分數"
+    )
+    at_bats: List[AtBatDetailForStreak] = Field(
+        ..., description="組成此次連線的所有打席詳細紀錄"
+    )

@@ -1,14 +1,13 @@
-# app/db_actions.py
-
 import logging
 import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy.inspection import inspect
 from sqlalchemy import func, or_, select
 
 from . import models
+from .config import settings  # 【新增】導入 settings 以取得連線定義
 
 
 def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
@@ -381,9 +380,6 @@ def get_summaries_by_position(
 def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str, Any]]:
     """【V2 版】使用 SQL 窗口函數 (LEAD) 高效查詢指定球員被故意四壞後，同一半局內下一位打者的打席結果。"""
 
-    # 1. 建立一個子查詢 (CTE)，使用 LEAD() 窗口函數
-    #    - PARTITION BY game_id, inning: 【修改】確保 LEAD 只在同一場比賽、同一個半局內查找
-    #    - ORDER BY id: 假設 id 的順序代表打席的時序
     at_bat_with_next_subquery = (
         select(
             models.AtBatDetailDB.id.label("at_bat_id"),
@@ -401,11 +397,9 @@ def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str,
         .subquery()
     )
 
-    # 建立別名以便查詢
     ibb_at_bat = aliased(models.AtBatDetailDB)
     next_at_bat = aliased(models.AtBatDetailDB)
 
-    # 2. 執行主查詢
     results = (
         db.query(ibb_at_bat, next_at_bat)
         .join(
@@ -426,7 +420,146 @@ def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str,
         .all()
     )
 
-    # 3. 將查詢結果格式化為 Pydantic 模型所需的字典格式
     return [
         {"intentional_walk": ibb, "next_at_bat": next_ab} for ibb, next_ab in results
     ]
+
+
+def find_on_base_streaks(
+    db: Session,
+    definition_name: str,
+    min_length: int,
+    player_names: Optional[List[str]],
+    lineup_positions: Optional[List[int]],
+) -> List[models.OnBaseStreak]:
+    """
+    【重構】查詢符合「連線」定義的打席序列。
+    根據是否提供特定球員/棒次，採用不同策略以優化效能。
+    """
+    # 1. 從設定檔取得有效的打席結果列表
+    valid_results = set(settings.STREAK_DEFINITIONS.get(definition_name, []))
+    if not valid_results:
+        logging.warning(f"無效的連線定義名稱: {definition_name}")
+        return []
+
+    # 2. 建立基礎查詢
+    query = (
+        db.query(models.AtBatDetailDB)
+        .join(models.PlayerGameSummaryDB)
+        .join(models.GameResultDB)
+        .options(
+            joinedload(models.AtBatDetailDB.player_summary).joinedload(
+                models.PlayerGameSummaryDB.game
+            )
+        )
+    )
+
+    # 效能優化：如果提供了球員姓名，則只查詢這些球員參加過的比賽
+    if player_names:
+        game_ids_subquery = (
+            select(models.PlayerGameSummaryDB.game_id)
+            .where(models.PlayerGameSummaryDB.player_name.in_(player_names))
+            .distinct()
+        )
+        query = query.filter(models.PlayerGameSummaryDB.game_id.in_(game_ids_subquery))
+
+    # 排序是為了後續在 Python 中能正確處理序列
+    all_at_bats = query.order_by(
+        models.GameResultDB.id,
+        models.AtBatDetailDB.inning,
+        models.AtBatDetailDB.sequence_in_game,
+    ).all()
+
+    # 3. 根據查詢類型，選擇不同的處理策略
+    all_streaks = []
+    if player_names or lineup_positions:
+        # 策略一：尋找符合指定「連續」序列的連線
+        target_list = player_names if player_names else lineup_positions
+        target_len = len(target_list)
+        if target_len < min_length:  # 如果指定序列長度小於最小要求，則無結果
+            return []
+
+        for i in range(len(all_at_bats) - target_len + 1):
+            potential_streak = all_at_bats[i : i + target_len]
+
+            # 檢查點 1: 所有打席必須在同一個半局
+            first_ab = potential_streak[0]
+            if not all(
+                ab.player_summary.game_id == first_ab.player_summary.game_id
+                and ab.inning == first_ab.inning
+                for ab in potential_streak
+            ):
+                continue
+
+            # 檢查點 2: 所有打席都必須是有效的連線結果
+            if not all(ab.result_short in valid_results for ab in potential_streak):
+                continue
+
+            # 檢查點 3: 序列必須完全匹配指定的球員或棒次
+            is_match = True
+            for j, ab in enumerate(potential_streak):
+                if player_names:
+                    if ab.player_summary.player_name != player_names[j]:
+                        is_match = False
+                        break
+                elif lineup_positions:
+                    try:
+                        if int(ab.player_summary.batting_order) != lineup_positions[j]:
+                            is_match = False
+                            break
+                    except (ValueError, TypeError):
+                        is_match = False
+                        break
+
+            if is_match:
+                all_streaks.append(potential_streak)
+    else:
+        # 策略二：尋找所有長度達標的泛用連線
+        current_streak = []
+        for i, at_bat in enumerate(all_at_bats):
+            is_valid = at_bat.result_short in valid_results
+            is_continuous = False
+            if current_streak:
+                prev_at_bat = current_streak[-1]
+                if (
+                    prev_at_bat.player_summary.game_id == at_bat.player_summary.game_id
+                    and prev_at_bat.inning == at_bat.inning
+                ):
+                    is_continuous = True
+
+            if is_valid and (not current_streak or is_continuous):
+                current_streak.append(at_bat)
+            else:
+                if len(current_streak) >= min_length:
+                    all_streaks.append(list(current_streak))
+                current_streak = [at_bat] if is_valid else []
+
+        if len(current_streak) >= min_length:
+            all_streaks.append(list(current_streak))
+
+    # 4. 將最終結果格式化為 Pydantic 模型
+    result_models = []
+    for streak in all_streaks:
+        if not streak:
+            continue
+        game = streak[0].player_summary.game
+        at_bat_models = [
+            models.AtBatDetailForStreak(
+                player_name=ab.player_summary.player_name,
+                batting_order=ab.player_summary.batting_order,
+                **ab.__dict__,
+            )
+            for ab in streak
+        ]
+
+        streak_model = models.OnBaseStreak(
+            game_id=game.id,
+            game_date=game.game_date,
+            inning=streak[0].inning,
+            streak_length=len(streak),
+            runs_scored_during_streak=sum(ab.runs_scored_on_play for ab in streak),
+            at_bats=at_bat_models,
+        )
+        result_models.append(streak_model)
+
+    return result_models

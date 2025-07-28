@@ -2,6 +2,8 @@
 
 import datetime
 from unittest.mock import patch
+import pytest
+from sqlalchemy.orm import Session
 
 from app import db_actions, models
 
@@ -413,3 +415,196 @@ def test_find_next_at_bats_after_ibb(db_session):
     assert result_earlier["next_at_bat"] is not None
     assert result_earlier["next_at_bat"].player_summary.player_name == "球員C"
     assert result_earlier["next_at_bat"].result_short == "三振"
+
+
+# --- 【新增】「連線」功能 db_actions 函式測試 ---
+
+
+@pytest.fixture(scope="function")
+def setup_streak_test_data(db_session: Session):
+    """建立一個用於測試「連線」功能的比賽場景。"""
+    game = models.GameResultDB(
+        cpbl_game_id="STREAK_TEST_GAME",
+        game_date=datetime.date(2025, 8, 15),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    # 建立球員摘要
+    summaries = {}
+    players = [("A", "1"), ("B", "2"), ("C", "3"), ("D", "4"), ("E", "5"), ("F", "6")]
+    for name, order in players:
+        summary = models.PlayerGameSummaryDB(
+            game_id=game.id,
+            player_name=f"球員{name}",
+            batting_order=order,
+            team_name="測試隊",
+        )
+        db_session.add(summary)
+        summaries[name] = summary
+    db_session.flush()
+
+    # 建立打席紀錄
+    # 半局一：球員A, B, C 連續上壘 (一安, 四壞, 二安)
+    db_session.add_all(
+        [
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id,
+                inning=1,
+                sequence_in_game=1,
+                result_short="一安",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=1,
+                sequence_in_game=2,
+                result_short="四壞",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id,
+                inning=1,
+                sequence_in_game=3,
+                result_short="二安",
+            ),
+            # 中斷點
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["D"].id,
+                inning=1,
+                sequence_in_game=4,
+                result_short="三振",
+            ),
+            # 半局二：球員E, F 連續安打
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["E"].id,
+                inning=2,
+                sequence_in_game=5,
+                result_short="全打",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["F"].id,
+                inning=2,
+                sequence_in_game=6,
+                result_short="一安",
+            ),
+        ]
+    )
+    db_session.commit()
+    return game
+
+
+def test_find_on_base_streaks_generic(db_session: Session, setup_streak_test_data):
+    """直接測試 db_actions 的泛用查詢功能。"""
+    # 測試 min_length=3，應只找到第一局的 3 人連線
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=3,
+        player_names=None,
+        lineup_positions=None,
+    )
+    assert len(streaks) == 1
+    assert streaks[0].streak_length == 3
+    assert streaks[0].at_bats[0].player_name == "球員A"
+
+    # 測試 min_length=2，應找到第一局的 3 人連線和第二局的 2 人連線
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=2,
+        player_names=None,
+        lineup_positions=None,
+    )
+    assert len(streaks) == 2
+
+
+def test_find_on_base_streaks_by_player_names(
+    db_session: Session, setup_streak_test_data
+):
+    """直接測試 db_actions 的指定球員序列查詢功能。"""
+    # 查詢 球員A -> 球員B -> 球員C 的連線
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=3,
+        player_names=["球員A", "球員B", "球員C"],
+        lineup_positions=None,
+    )
+    assert len(streaks) == 1
+    streak = streaks[0]
+    assert streak.streak_length == 3
+    assert streak.at_bats[0].player_name == "球員A"
+    assert streak.at_bats[1].player_name == "球員B"
+    assert streak.at_bats[2].player_name == "球員C"
+
+    # 查詢一個不存在的序列 (球員A -> 球員C)
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=2,
+        player_names=["球員A", "球員C"],
+        lineup_positions=None,
+    )
+    assert len(streaks) == 0
+
+
+def test_find_on_base_streaks_by_lineup_positions(
+    db_session: Session, setup_streak_test_data
+):
+    """直接測試 db_actions 的指定棒次序列查詢功能。"""
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=3,
+        player_names=None,
+        lineup_positions=[1, 2, 3],
+    )
+    assert len(streaks) == 1
+    streak = streaks[0]
+    assert streak.streak_length == 3
+    assert streak.at_bats[0].batting_order == "1"
+    assert streak.at_bats[1].batting_order == "2"
+    assert streak.at_bats[2].batting_order == "3"
+
+
+def test_find_on_base_streaks_with_different_definition(
+    db_session: Session, setup_streak_test_data
+):
+    """直接測試 db_actions 使用不同連線定義的功能。"""
+    # 使用 consecutive_hits (連續安打) 定義，第一局的連線因包含「四壞」而應被排除
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_hits",
+        min_length=2,
+        player_names=None,
+        lineup_positions=None,
+    )
+    assert len(streaks) == 1
+    # 只有第二局的全打+一安符合連續安打
+    assert streaks[0].streak_length == 2
+    assert streaks[0].at_bats[0].player_name == "球員E"
+    assert streaks[0].at_bats[1].player_name == "球員F"
+
+
+def test_find_on_base_streaks_no_result(db_session: Session, setup_streak_test_data):
+    """測試各種應返回空列表的情境。"""
+    # 查詢一個不可能的長連線
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="consecutive_on_base",
+        min_length=10,
+        player_names=None,
+        lineup_positions=None,
+    )
+    assert len(streaks) == 0
+
+    # 查詢一個不存在的 definition_name
+    streaks = db_actions.find_on_base_streaks(
+        db=db_session,
+        definition_name="invalid_definition",
+        min_length=2,
+        player_names=None,
+        lineup_positions=None,
+    )
+    assert len(streaks) == 0

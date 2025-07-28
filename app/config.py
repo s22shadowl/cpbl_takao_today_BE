@@ -1,7 +1,8 @@
-# app/config.py
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict
+
+# 【新增】從新建的常數模組導入打席結果分類
+from .core.constants import HITS, ON_BASE_RESULTS, ADVANCEMENT_RESULTS
 
 
 class Settings(BaseSettings):
@@ -28,6 +29,16 @@ class Settings(BaseSettings):
     DEFAULT_REQUEST_TIMEOUT: int = 30
     PLAYWRIGHT_TIMEOUT: int = 60000
     FRIENDLY_SCRAPING_DELAY: int = 2
+
+    # 【修改】「連線」功能定義，改為引用常數模組，並將 set 轉為 list
+    STREAK_DEFINITIONS: Dict[str, List[str]] = {
+        # 定義 A: 連續安打
+        "consecutive_hits": list(HITS),
+        # 定義 B: 連續上壘 (安打 + 保送/觸身)
+        "consecutive_on_base": list(ON_BASE_RESULTS),
+        # 定義 C: 連續推進 (上壘 + 犧牲打)
+        "consecutive_advancements": list(ADVANCEMENT_RESULTS),
+    }
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -1,5 +1,3 @@
-# tests/test_main.py
-
 import pytest
 import datetime
 from unittest.mock import patch
@@ -15,6 +13,83 @@ from app import db_actions, models
 def override_get_api_key_success():
     """一個假的 get_api_key 函式，直接回傳成功。"""
     return "test-api-key"
+
+
+# --- 測試資料設定 Fixture ---
+
+
+@pytest.fixture(scope="function")
+def setup_streak_test_data(db_session: Session):
+    """建立一個用於測試「連線」功能的比賽場景。"""
+    game = models.GameResultDB(
+        cpbl_game_id="STREAK_TEST_GAME",
+        game_date=datetime.date(2025, 8, 15),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    # 建立球員摘要
+    summaries = {}
+    players = [("A", "1"), ("B", "2"), ("C", "3"), ("D", "4"), ("E", "5"), ("F", "6")]
+    for name, order in players:
+        summary = models.PlayerGameSummaryDB(
+            game_id=game.id,
+            player_name=f"球員{name}",
+            batting_order=order,
+            team_name="測試隊",
+        )
+        db_session.add(summary)
+        summaries[name] = summary
+    db_session.flush()
+
+    # 建立打席紀錄
+    # 半局一：球員A, B, C 連續上壘 (一安, 四壞, 二安)
+    db_session.add_all(
+        [
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id,
+                inning=1,
+                sequence_in_game=1,
+                result_short="一安",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=1,
+                sequence_in_game=2,
+                result_short="四壞",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id,
+                inning=1,
+                sequence_in_game=3,
+                result_short="二安",
+            ),
+            # 中斷點
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["D"].id,
+                inning=1,
+                sequence_in_game=4,
+                result_short="三振",
+            ),
+            # 半局二：球員E, F 連續安打
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["E"].id,
+                inning=2,
+                sequence_in_game=5,
+                result_short="全打",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["F"].id,
+                inning=2,
+                sequence_in_game=6,
+                result_short="一安",
+            ),
+        ]
+    )
+    db_session.commit()
+    return game
 
 
 # --- 測試案例 ---
@@ -381,6 +456,91 @@ def test_get_next_at_bats_after_ibb(client: TestClient, db_session: Session):
     # 驗證其 next_at_bat 存在且結果正確
     assert result_earlier["next_at_bat"] is not None
     assert result_earlier["next_at_bat"]["result_short"] == "三振"
+
+
+# --- 「連線」分析端點測試 ---
+
+
+def test_get_streaks_generic_search(client: TestClient, setup_streak_test_data):
+    """測試泛用查詢，不指定球員或棒次。"""
+    # 測試 min_length=3，應只找到第一局的 3 人連線
+    response = client.get("/api/analysis/streaks?min_length=3")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["streak_length"] == 3
+    assert data[0]["at_bats"][0]["player_name"] == "球員A"
+
+    # 測試 min_length=2，應找到第一局的 3 人連線和第二局的 2 人連線
+    response = client.get("/api/analysis/streaks?min_length=2")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+
+
+def test_get_streaks_by_player_names(client: TestClient, setup_streak_test_data):
+    """測試使用 player_names 參數查詢特定連續球員的連線。"""
+    # 查詢 球員A -> 球員B -> 球員C 的連線
+    response = client.get(
+        "/api/analysis/streaks?player_names=球員A&player_names=球員B&player_names=球員C"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    streak = data[0]
+    assert streak["streak_length"] == 3
+    assert streak["at_bats"][0]["player_name"] == "球員A"
+    assert streak["at_bats"][1]["player_name"] == "球員B"
+    assert streak["at_bats"][2]["player_name"] == "球員C"
+
+    # 查詢一個不存在的連線
+    response = client.get("/api/analysis/streaks?player_names=球員A&player_names=球員C")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_streaks_by_lineup_positions(client: TestClient, setup_streak_test_data):
+    """測試使用 lineup_positions 參數查詢特定連續棒次的連線。"""
+    # 查詢 1 -> 2 -> 3 棒的連線
+    response = client.get(
+        "/api/analysis/streaks?lineup_positions=1&lineup_positions=2&lineup_positions=3"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    streak = data[0]
+    assert streak["streak_length"] == 3
+    assert streak["at_bats"][0]["batting_order"] == "1"
+    assert streak["at_bats"][1]["batting_order"] == "2"
+    assert streak["at_bats"][2]["batting_order"] == "3"
+
+
+def test_get_streaks_with_different_definition(
+    client: TestClient, setup_streak_test_data
+):
+    """測試使用不同的連線定義。"""
+    # 使用 consecutive_hits (連續安打) 定義，第一局的連線因包含「四壞」而應被排除
+    response = client.get(
+        "/api/analysis/streaks?definition_name=consecutive_hits&min_length=2"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    # 只有第二局的全打+一安符合連續安打
+    assert data[0]["streak_length"] == 2
+    assert data[0]["at_bats"][0]["player_name"] == "球員E"
+
+
+def test_get_streaks_edge_cases(client: TestClient):
+    """測試 API 的邊界條件與錯誤處理。"""
+    # 同時提供 player_names 和 lineup_positions，應返回 400 錯誤
+    response = client.get("/api/analysis/streaks?player_names=A&lineup_positions=1")
+    assert response.status_code == 400
+
+    # 提供無效的 definition_name，應返回空列表
+    response = client.get("/api/analysis/streaks?definition_name=invalid_def")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 # --- 手動觸發任務的端點 ---

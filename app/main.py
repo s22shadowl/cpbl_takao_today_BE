@@ -166,6 +166,45 @@ def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
     return results
 
 
+@app.get(
+    "/api/analysis/streaks",
+    response_model=List[models.OnBaseStreak],
+    tags=["Analysis"],
+    summary="查詢「連線」紀錄",
+)
+def get_on_base_streaks(
+    db: Session = Depends(get_db),
+    definition_name: str = Query("consecutive_on_base", description="要使用的連線定義"),
+    min_length: int = Query(2, description="連線的最短長度", ge=2),
+    player_names: Optional[List[str]] = Query(
+        None, description="要查詢的連續球員姓名列表"
+    ),
+    lineup_positions: Optional[List[int]] = Query(
+        None, description="要查詢的連續棒次列表"
+    ),
+):
+    """
+    查詢符合「連線」定義的打席序列。
+    - 可依據不同的定義（連續安打、連續上壘）進行查詢。
+    - 可指定查詢特定連續球員或特定連續棒次的連線紀錄。
+    - 若未指定球員或棒次，則回傳所有長度達標的泛用連線。
+    """
+    if player_names and lineup_positions:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot specify both player_names and lineup_positions at the same time.",
+        )
+
+    streaks = db_actions.find_on_base_streaks(
+        db=db,
+        definition_name=definition_name,
+        min_length=min_length,
+        player_names=player_names,
+        lineup_positions=lineup_positions,
+    )
+    return streaks
+
+
 # --- 手動觸發任務的端點 ---
 
 
