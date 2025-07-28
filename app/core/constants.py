@@ -91,7 +91,7 @@ ADVANCEMENT_RESULTS = ON_BASE_RESULTS | SACRIFICES
 # 【新增】關鍵字定義 (用於解析完整文字描述) - 來源: Live 直播文字
 # ==============================================================================
 
-# --- 用於 parser._determine_result_details ---
+# --- 用於 parsers.live._determine_result_details ---
 PARSER_ON_BASE_KEYWORDS = {"安打", "保送", "四壞", "觸身", "全壘打"}
 PARSER_OUT_KEYWORDS = {"三振", "出局", "雙殺", "封殺"}
 PARSER_SACRIFICE_KEYWORDS = {"犧牲"}

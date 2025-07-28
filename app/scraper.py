@@ -12,7 +12,7 @@ from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 from app.config import settings, TEAM_CLUB_CODES
 from app.core import fetcher
-from app.core import parser as html_parser
+from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def scrape_and_store_season_stats():
         logger.error("無法獲取球隊數據頁面內容。")
         return
 
-    season_stats_list = html_parser.parse_season_stats_page(html_content)
+    season_stats_list = season_stats.parse_season_stats_page(html_content)
     if not season_stats_list:
         logger.info("未解析到任何球員的球季數據。")
         return
@@ -154,7 +154,7 @@ def _process_filtered_games(
                     "div.GameBoxDetail", state="visible", timeout=30000
                 )
                 # 【修改】將 target_teams 參數傳遞給 parser
-                all_players_data = html_parser.parse_box_score_page(
+                all_players_data = box_score.parse_box_score_page(
                     page.content(), target_teams=target_teams
                 )
                 if not all_players_data:
@@ -200,7 +200,7 @@ def _process_filtered_games(
                                     pass
 
                     inning_html = active_inning_content.inner_html()
-                    parsed_events = html_parser.parse_active_inning_details(
+                    parsed_events = live.parse_active_inning_details(
                         inning_html, inning_num
                     )
                     full_game_events.extend(parsed_events)
@@ -327,9 +327,7 @@ def scrape_single_day(specific_date=None):
         logger.info("--- [單日模式] 因無法獲取月賽程而中止 ---")
         return
 
-    all_month_games = html_parser.parse_schedule_page(
-        html_content, target_date_obj.year
-    )
+    all_month_games = schedule.parse_schedule_page(html_content, target_date_obj.year)
     games_for_day = [
         game for game in all_month_games if game.get("game_date") == target_date_str
     ]
@@ -364,9 +362,7 @@ def scrape_entire_month(month_str=None):
     if not html_content:
         return
 
-    all_month_games = html_parser.parse_schedule_page(
-        html_content, target_date_obj.year
-    )
+    all_month_games = schedule.parse_schedule_page(html_content, target_date_obj.year)
 
     if target_date_obj.year == today.year and target_date_obj.month == today.month:
         games_to_process = [
@@ -397,9 +393,7 @@ def scrape_entire_year(year_str=None):
     for month in range(start_month, end_month + 1):
         html_content = fetcher.fetch_schedule_page(year_to_scrape, month)
         if html_content:
-            all_month_games = html_parser.parse_schedule_page(
-                html_content, year_to_scrape
-            )
+            all_month_games = schedule.parse_schedule_page(html_content, year_to_scrape)
             logger.info(
                 f"月份 {year_to_scrape}-{month:02d} 共解析到 {len(all_month_games)} 場比賽。"
             )

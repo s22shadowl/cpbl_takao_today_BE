@@ -1,38 +1,8 @@
-# tests/core/test_parser.py
+# tests/parsers/test_live.py
 
 import pytest
-from pathlib import Path
-from app.core import parser
+from app.parsers import live
 from app.models import AtBatResultType
-from app.config import settings
-
-FIXTURES_DIR = Path(__file__).parent.parent / "fixtures"
-
-# --- Fixtures ---
-
-
-@pytest.fixture
-def schedule_html_content():
-    schedule_file = FIXTURES_DIR / "schedule_page.html"
-    if not schedule_file.exists():
-        pytest.skip("測試素材 schedule_page.html 不存在，跳過相關測試。")
-    return schedule_file.read_text(encoding="utf-8")
-
-
-@pytest.fixture
-def team_score_html_content():
-    teamscore_file = FIXTURES_DIR / "team_score_page.html"
-    if not teamscore_file.exists():
-        pytest.skip("測試素材 team_score_page.html 不存在，跳過相關測試。")
-    return teamscore_file.read_text(encoding="utf-8")
-
-
-@pytest.fixture
-def box_score_html_content():
-    box_score_file = FIXTURES_DIR / "box_score_page.html"
-    if not box_score_file.exists():
-        pytest.skip("測試素材 box_score_page.html 不存在，跳過相關測試。")
-    return box_score_file.read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -82,51 +52,10 @@ def active_inning_html_content():
     """
 
 
-# --- 測試案例 ---
-
-
-def test_parse_schedule_page(schedule_html_content):
-    result = parser.parse_schedule_page(schedule_html_content, year=2025)
-    assert isinstance(result, list)
-    assert len(result) > 0
-
-
-def test_parse_season_stats_page(team_score_html_content):
-    """【修改】驗證函式能解析出所有球員，而不只是特定目標球員"""
-    result = parser.parse_season_stats_page(team_score_html_content)
-    assert isinstance(result, list)
-    # 斷言解析出的球員數量應大於等於我們已知的目標球員數量
-    assert len(result) >= len(settings.TARGET_PLAYER_NAMES)
-
-    # 驗證所有已知的目標球員都包含在解析結果中
-    parsed_player_names = {p["player_name"] for p in result}
-    assert set(settings.TARGET_PLAYER_NAMES).issubset(parsed_player_names)
-
-
-def test_parse_box_score_page(box_score_html_content):
-    """【修改】驗證函式能解析出所有球員，並可透過參數篩選"""
-    # 案例一：不帶參數，應解析出所有球員
-    result_all = parser.parse_box_score_page(box_score_html_content)
-    assert isinstance(result_all, list)
-    assert len(result_all) > len(
-        settings.TARGET_PLAYER_NAMES
-    )  # 假定 fixture 中有更多球員
-
-    # 案例二：帶入參數，只解析指定球隊的球員
-    # 【修正】將目標球隊改為從 settings 動態讀取
-    target_team = settings.TARGET_TEAMS[0]
-    result_filtered = parser.parse_box_score_page(
-        box_score_html_content, target_teams=[target_team]
-    )
-    assert isinstance(result_filtered, list)
-    assert len(result_filtered) > 0
-    assert all(p["summary"]["team_name"] == target_team for p in result_filtered)
-
-
 def test_parse_active_inning_details(active_inning_html_content):
     """【修改】驗證 parse_active_inning_details 的完整解析邏輯，包含新欄位"""
     inning_number = 5
-    events = parser.parse_active_inning_details(
+    events = live.parse_active_inning_details(
         active_inning_html_content, inning=inning_number
     )
 
@@ -163,6 +92,6 @@ def test_parse_active_inning_details(active_inning_html_content):
 )
 def test_determine_result_details(description, expected_type, expected_runs):
     """測試 _determine_result_details 函式能否正確解析各種文字描述。"""
-    result = parser._determine_result_details(description)
+    result = live._determine_result_details(description)
     assert result["result_type"] == expected_type
     assert result["runs_scored_on_play"] == expected_runs
