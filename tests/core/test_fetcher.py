@@ -1,5 +1,3 @@
-# tests/core/test_fetcher.py
-
 import pytest
 import requests
 from playwright.sync_api import Page, expect
@@ -51,15 +49,24 @@ def test_schedule_page_interaction(page: Page):
         pytest.skip("測試素材 schedule_page.html 不存在，跳過此測試。")
 
     fake_html_content = schedule_html_path.read_text(encoding="utf-8")
-    page.route(
-        settings.SCHEDULE_URL,
-        lambda route: route.fulfill(
-            status=200, body=fake_html_content, content_type="text/html; charset=utf-8"
-        ),
-    )
+
+    # 【修改】設定一個更穩健的路由攔截，確保測試的獨立性
+    def handle_route(route):
+        if route.request.url == settings.SCHEDULE_URL:
+            route.fulfill(
+                status=200,
+                body=fake_html_content,
+                content_type="text/html; charset=utf-8",
+            )
+        else:
+            # 中斷所有其他非必要的網路請求 (CSS, JS, 圖片等)
+            route.abort()
+
+    page.route("**/*", handle_route)
 
     # 2. 執行：在 page 物件上模擬 fetch_schedule_page 函式中的操作
-    page.goto(settings.SCHEDULE_URL)
+    # 【修改】增加 wait_until='domcontentloaded' 選項，讓測試不必等待所有外部資源
+    page.goto(settings.SCHEDULE_URL, wait_until="domcontentloaded")
 
     # 斷言：檢查頁面是否已載入我們的假 HTML
     expect(page.locator('a[title="列表顯示"]')).to_be_visible()
@@ -84,19 +91,25 @@ def test_dynamic_content_waits_correctly(page: Page):
     # 1. 準備
     fake_url = f"{settings.BASE_URL}/some_fake_path"
     fake_html = "<html><body><div id='my-data' style='display:none;'>目標內容</div></body></html>"
-    page.route(
-        fake_url,
-        lambda route: route.fulfill(
-            status=200, body=fake_html, content_type="text/html; charset=utf-8"
-        ),
-    )
+
+    # 【修改】同樣套用穩健的路由攔截
+    def handle_route(route):
+        if route.request.url == fake_url:
+            route.fulfill(
+                status=200, body=fake_html, content_type="text/html; charset=utf-8"
+            )
+        else:
+            route.abort()
+
+    page.route("**/*", handle_route)
+
     # 模擬一個讓元素延遲可見的 JS
     page.add_init_script(
         "setTimeout(() => { document.getElementById('my-data').style.display = 'block'; }, 100)"
     )
 
     # 2. 執行
-    page.goto(fake_url)
+    page.goto(fake_url, wait_until="domcontentloaded")
     # 驗證核心邏輯：等待特定元素變為可見
     page.wait_for_selector("#my-data", state="visible")
 

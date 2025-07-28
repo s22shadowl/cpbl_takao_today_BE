@@ -6,11 +6,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from tenacity import retry, stop_after_delay, wait_fixed
 
-# **新增**: 匯入 Alembic 相關模組
-from alembic.config import Config
-from alembic import command
-
-# 依賴 .env 檔案來取得連線資訊與 API 金鑰
+# 【修改】不再需要 Alembic，改為直接從 app.db 導入 Base
+from app.db import Base
 from app.config import settings
 
 # --- E2E 測試設定 ---
@@ -30,23 +27,24 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 @pytest.fixture(scope="session", autouse=True)
 def apply_migrations():
     """
-    一個 session 等級、自動執行的 fixture。
-    在所有 E2E 測試開始前，執行 Alembic migrations 來建立資料表。
-    在所有測試結束後，執行 downgrade 將資料庫還原為空。
+    【修改】一個 session 等級、自動執行的 fixture。
+    在所有 E2E 測試開始前，直接使用 SQLAlchemy metadata 建立資料表。
+    這種方法更為穩健，能確保測試環境的絕對乾淨。
     """
     print("\n[E2E Setup] 正在設定 E2E 測試資料庫...")
-    alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", DB_URL)
 
-    # 升級到最新版本
-    command.upgrade(alembic_cfg, "head")
+    # 【修改】使用 SQLAlchemy metadata 直接刪除和建立所有資料表
+    print("[E2E Setup] 正在刪除所有舊資料表...")
+    Base.metadata.drop_all(bind=engine)
+    print("[E2E Setup] 正在建立所有新資料表...")
+    Base.metadata.create_all(bind=engine)
     print("[E2E Setup] 資料庫結構已建立。")
 
     yield
 
-    # 降級回初始狀態
+    # Teardown 時再執行一次刪除，確保測試結束後環境是乾淨的
     print("\n[E2E Teardown] 正在清理 E2E 測試資料庫...")
-    command.downgrade(alembic_cfg, "base")
+    Base.metadata.drop_all(bind=engine)
     print("[E2E Teardown] 資料庫已還原。")
 
 
