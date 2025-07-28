@@ -1,4 +1,4 @@
-# tests/crud/test_players.py
+# tests/crud/test_crud_players.py
 
 from app import models
 from app.crud import games, players

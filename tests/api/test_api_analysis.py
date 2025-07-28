@@ -1,22 +1,11 @@
-# tests/test_main.py
+# tests/api/test_api_analysis.py
 
 import pytest
 import datetime
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
-
-from app.crud import games
-from app.main import app, get_api_key
 from app import models
-
-# --- 輔助函式 (Overrides) ---
-
-
-def override_get_api_key_success():
-    """一個假的 get_api_key 函式，直接回傳成功。"""
-    return "test-api-key"
-
 
 # --- 測試資料設定 Fixture ---
 
@@ -95,132 +84,75 @@ def setup_streak_test_data(db_session: Session):
     return game
 
 
-# --- 測試案例 ---
-
-
-def test_get_games_by_date_success(client: TestClient, db_session: Session):
-    """測試 /api/games/{game_date} 端點在成功獲取數據時的情況"""
-    game_info_1 = {
-        "cpbl_game_id": "TEST_MAIN_01",
-        "game_date": "2025-06-21",
-        "home_team": "測試主隊",
-        "away_team": "測試客隊",
-        "status": "已完成",
-    }
-    games.store_game_and_get_id(db_session, game_info_1)
-    db_session.commit()
-
-    response = client.get("/api/games/2025-06-21")
-
-    assert response.status_code == 200
-    json_response = response.json()
-    assert len(json_response) == 1
-    assert json_response[0]["cpbl_game_id"] == "TEST_MAIN_01"
-
-
-def test_get_games_by_date_not_found(client: TestClient):
-    """【修改】測試 /api/games/{game_date} 端點在查無資料時返回 200 和空列表"""
-    response = client.get("/api/games/2025-01-01")
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-def test_get_games_by_date_bad_format(client: TestClient):
-    """測試 /api/games/{game_date} 端點在傳入錯誤日期格式時的情況"""
-    response = client.get("/api/games/2025-06-21-invalid")
-    assert response.status_code == 422
-
-
-def test_get_game_details_success(client: TestClient, db_session: Session):
-    """【擴充】測試獲取單場比賽完整細節的端點，包含多球員與多打席情境"""
+@pytest.fixture(scope="function")
+def setup_ibb_impact_test_data(db_session: Session):
+    """建立一個用於測試「IBB 影響」功能的比賽場景。"""
     game = models.GameResultDB(
-        cpbl_game_id="TEST_DETAIL_API",
-        game_date=datetime.date(2025, 7, 22),
+        cpbl_game_id="IBB_IMPACT_TEST_GAME",
+        game_date=datetime.date(2025, 8, 16),
         home_team="H",
         away_team="A",
     )
     db_session.add(game)
     db_session.flush()
 
-    summary1 = models.PlayerGameSummaryDB(
-        game_id=game.id, player_name="測試員API_1", team_name="測試隊"
-    )
-    db_session.add(summary1)
+    summaries = {}
+    players = [("A", "1"), ("B", "2"), ("C", "3"), ("D", "4")]
+    for name, order in players:
+        summary = models.PlayerGameSummaryDB(
+            game_id=game.id,
+            player_name=f"影響者{name}",
+            batting_order=order,
+            team_name="測試隊",
+        )
+        db_session.add(summary)
+        summaries[name] = summary
     db_session.flush()
-    detail1_1 = models.AtBatDetailDB(
-        player_game_summary_id=summary1.id, sequence_in_game=1, result_short="全壘打"
-    )
-    detail1_2 = models.AtBatDetailDB(
-        player_game_summary_id=summary1.id, sequence_in_game=2, result_short="三振"
-    )
-    db_session.add_all([detail1_1, detail1_2])
 
-    summary2 = models.PlayerGameSummaryDB(
-        game_id=game.id, player_name="測試員API_2", team_name="測試隊"
+    # 建立打席紀錄
+    db_session.add_all(
+        [
+            # 第 1 局: IBB 後續得 3 分
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id,
+                inning=1,
+                result_short="一安",
+                runs_scored_on_play=0,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=1,
+                result_description_full="故意四壞",
+                runs_scored_on_play=0,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id,
+                inning=1,
+                result_short="二安",
+                runs_scored_on_play=1,
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["D"].id,
+                inning=1,
+                result_short="全打",
+                runs_scored_on_play=2,
+            ),
+            # 第 2 局: IBB 後續得 0 分
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["A"].id, inning=2, result_short="滾地"
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["B"].id,
+                inning=2,
+                result_description_full="故意四壞",
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summaries["C"].id, inning=2, result_short="三振"
+            ),
+        ]
     )
-    db_session.add(summary2)
-    db_session.flush()
-    detail2_1 = models.AtBatDetailDB(
-        player_game_summary_id=summary2.id, sequence_in_game=1, result_short="一壘安打"
-    )
-    db_session.add(detail2_1)
-
     db_session.commit()
-
-    response = client.get(f"/api/games/details/{game.id}")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert data["cpbl_game_id"] == "TEST_DETAIL_API"
-    assert len(data["player_summaries"]) == 2
-
-    player1_summary = next(
-        p for p in data["player_summaries"] if p["player_name"] == "測試員API_1"
-    )
-    assert len(player1_summary["at_bat_details"]) == 2
-    assert player1_summary["at_bat_details"][0]["result_short"] == "全壘打"
-
-    player2_summary = next(
-        p for p in data["player_summaries"] if p["player_name"] == "測試員API_2"
-    )
-    assert len(player2_summary["at_bat_details"]) == 1
-    assert player2_summary["at_bat_details"][0]["result_short"] == "一壘安打"
-
-
-def test_get_game_details_not_found(client: TestClient):
-    """測試查詢不存在的比賽 ID 時返回 404"""
-    response = client.get("/api/games/details/9999")
-    assert response.status_code == 404
-
-
-def test_get_player_stats_history_success(client: TestClient, db_session: Session):
-    """【擴充】測試獲取球員球季數據歷史紀錄的端點，確保能正確過濾球員"""
-    history_A1 = models.PlayerSeasonStatsHistoryDB(
-        player_name="歷史哥A", avg=0.250, created_at=datetime.datetime(2025, 7, 20)
-    )
-    history_A2 = models.PlayerSeasonStatsHistoryDB(
-        player_name="歷史哥A", avg=0.255, created_at=datetime.datetime(2025, 7, 21)
-    )
-    history_B1 = models.PlayerSeasonStatsHistoryDB(
-        player_name="歷史哥B", avg=0.300, created_at=datetime.datetime(2025, 7, 21)
-    )
-    db_session.add_all([history_A1, history_A2, history_B1])
-    db_session.commit()
-
-    response = client.get("/api/players/歷史哥A/stats/history")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["avg"] == 0.250
-    assert data[1]["avg"] == 0.255
-    assert all(item["player_name"] == "歷史哥A" for item in data)
-
-
-def test_get_player_stats_history_not_found(client: TestClient):
-    """測試查詢不存在的球員歷史數據時返回 404"""
-    response = client.get("/api/players/路人甲/stats/history")
-    assert response.status_code == 404
+    return game
 
 
 # --- 進階分析端點測試 ---
@@ -549,77 +481,6 @@ def test_get_streaks_edge_cases(client: TestClient):
 # --- 【新增】「IBB 影響」分析端點測試 ---
 
 
-@pytest.fixture(scope="function")
-def setup_ibb_impact_test_data(db_session: Session):
-    """建立一個用於測試「IBB 影響」功能的比賽場景。"""
-    game = models.GameResultDB(
-        cpbl_game_id="IBB_IMPACT_TEST_GAME",
-        game_date=datetime.date(2025, 8, 16),
-        home_team="H",
-        away_team="A",
-    )
-    db_session.add(game)
-    db_session.flush()
-
-    summaries = {}
-    players = [("A", "1"), ("B", "2"), ("C", "3"), ("D", "4")]
-    for name, order in players:
-        summary = models.PlayerGameSummaryDB(
-            game_id=game.id,
-            player_name=f"影響者{name}",
-            batting_order=order,
-            team_name="測試隊",
-        )
-        db_session.add(summary)
-        summaries[name] = summary
-    db_session.flush()
-
-    # 建立打席紀錄
-    db_session.add_all(
-        [
-            # 第 1 局: IBB 後續得 3 分
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["A"].id,
-                inning=1,
-                result_short="一安",
-                runs_scored_on_play=0,
-            ),
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["B"].id,
-                inning=1,
-                result_description_full="故意四壞",
-                runs_scored_on_play=0,
-            ),
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["C"].id,
-                inning=1,
-                result_short="二安",
-                runs_scored_on_play=1,
-            ),
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["D"].id,
-                inning=1,
-                result_short="全打",
-                runs_scored_on_play=2,
-            ),
-            # 第 2 局: IBB 後續得 0 分
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["A"].id, inning=2, result_short="滾地"
-            ),
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["B"].id,
-                inning=2,
-                result_description_full="故意四壞",
-            ),
-            models.AtBatDetailDB(
-                player_game_summary_id=summaries["C"].id, inning=2, result_short="三振"
-            ),
-        ]
-    )
-    db_session.commit()
-    return game
-
-
 def test_get_ibb_impact_analysis(client: TestClient, setup_ibb_impact_test_data):
     """測試 /api/analysis/players/{player_name}/ibb-impact 端點。"""
     response = client.get("/api/analysis/players/影響者B/ibb-impact")
@@ -644,70 +505,3 @@ def test_get_ibb_impact_analysis(client: TestClient, setup_ibb_impact_test_data)
     assert result_inning1["subsequent_at_bats"][0]["player_name"] == "影響者C"
     assert result_inning1["subsequent_at_bats"][1]["player_name"] == "影響者D"
     assert result_inning1["runs_scored_after_ibb"] == 3
-
-
-# --- 手動觸發任務的端點 ---
-
-
-@pytest.mark.parametrize(
-    "mode, date_param, expected_task_str",
-    [
-        ("daily", "2025-06-21", "app.main.task_scrape_single_day"),
-        ("monthly", "2025-06", "app.main.task_scrape_entire_month"),
-        ("yearly", "2025", "app.main.task_scrape_entire_year"),
-    ],
-)
-def test_run_scraper_manually(
-    client: TestClient, mocker, mode, date_param, expected_task_str
-):
-    mock_task = mocker.patch(expected_task_str)
-    app.dependency_overrides[get_api_key] = override_get_api_key_success
-    headers = {"X-API-Key": "any-key-will-do"}
-    request_payload = {"mode": mode, "date": date_param}
-    response = client.post("/api/run_scraper", headers=headers, json=request_payload)
-    del app.dependency_overrides[get_api_key]
-    assert response.status_code == 202
-    mock_task.send.assert_called_once_with(date_param)
-
-
-def test_run_scraper_manually_invalid_mode(client: TestClient):
-    app.dependency_overrides[get_api_key] = override_get_api_key_success
-    headers = {"X-API-Key": "any-key-will-do"}
-    request_payload = {"mode": "invalid_mode", "date": None}
-    response = client.post("/api/run_scraper", headers=headers, json=request_payload)
-    del app.dependency_overrides[get_api_key]
-    assert response.status_code == 400
-
-
-def test_update_schedule_manually(client: TestClient, mocker):
-    mock_task = mocker.patch("app.main.task_update_schedule_and_reschedule")
-    app.dependency_overrides[get_api_key] = override_get_api_key_success
-    headers = {"X-API-Key": "any-key-will-do"}
-    response = client.post("/api/update_schedule", headers=headers)
-    del app.dependency_overrides[get_api_key]
-    assert response.status_code == 202
-    mock_task.send.assert_called_once()
-
-
-# --- API 金鑰保護 ---
-
-
-def test_post_endpoints_no_api_key(client: TestClient):
-    response_run = client.post(
-        "/api/run_scraper", json={"mode": "daily", "date": "2025-01-01"}
-    )
-    assert response_run.status_code == 403
-    response_update = client.post("/api/update_schedule")
-    assert response_update.status_code == 403
-
-
-def test_post_endpoints_wrong_api_key(client: TestClient):
-    headers = {"X-API-Key": "wrong-key"}
-    response_run = client.post(
-        "/api/run_scraper",
-        headers=headers,
-        json={"mode": "daily", "date": "2025-01-01"},
-    )
-    assert response_run.status_code == 403
-    response_update = client.post("/api/update_schedule", headers=headers)
-    assert response_update.status_code == 403

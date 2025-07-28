@@ -13,8 +13,6 @@ from app.db import SessionLocal
 # 【新】從 tasks 中匯入任務，因為排程器現在需要呼叫 Dramatiq 任務
 from app.tasks import task_scrape_single_day
 
-# 【核心修正】: 移除舊的 basicConfig，只取得 logger
-# logger 會自動繼承由 app/tasks.py 或 app/main.py 初始化的全域設定
 logger = logging.getLogger(__name__)
 
 # 初始化排程器

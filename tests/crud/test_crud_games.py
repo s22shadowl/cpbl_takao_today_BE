@@ -1,4 +1,4 @@
-# tests/crud/test_games.py
+# tests/crud/test_crud_games.py
 
 import datetime
 from app import models
