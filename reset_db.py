@@ -8,31 +8,45 @@
 
 import logging
 import argparse
-from app.db import engine, Base
+import os
+from dotenv import load_dotenv
 from app.logging_config import setup_logging
 
-# 關鍵：我們需要先導入 models，讓 Base 知道有哪些表格需要被操作
-# 我們用 # noqa: F401 來告訴 linter，這個匯入雖然看起來沒被使用，但卻是必要的。
-from app import models  # noqa: F401
 
-# 在模組載入時就套用日誌設定
-setup_logging()
-# 使用標準方式取得 logger
-logger = logging.getLogger(__name__)
-
-
-def reset_db():
+def main():
     """
-    刪除並重新建立所有資料庫表格。
+    執行資料庫重設的主要邏輯。
     """
+    # 步驟 1: 優先設定日誌系統
+    setup_logging()
+    logger = logging.getLogger(__name__)
+
+    # 步驟 2: 接著載入環境變數，這必須在導入 app.db 之前完成
+    logger.info("正在載入 .env 環境變數...")
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        load_dotenv(dotenv_path=env_path)
+        logger.info(".env 檔案已成功載入。")
+    else:
+        logger.error(
+            "錯誤：在專案根目錄下找不到 .env 檔案。無法確定資料庫連線資訊，腳本終止。"
+        )
+        exit(1)
+
+    # 步驟 3: 現在環境變數已設定，可以安全地導入 app 相關模組
+    from app.db import engine, Base
+
+    # 關鍵：我們需要先導入 models，讓 Base 知道有哪些表格需要被操作
+    # 我們用 # noqa: F401 來告訴 linter，這個匯入雖然看起來沒被使用，但卻是必要的。
+    from app import models  # noqa: F401
+
+    # 步驟 4: 執行資料庫操作
     try:
         logger.info("正在連接到資料庫並準備刪除所有表格...")
-        # Base.metadata.drop_all 會依照依賴順序，安全地刪除所有表格
         Base.metadata.drop_all(bind=engine)
         logger.info("所有舊表格已成功刪除。")
 
         logger.info("正在重新建立所有表格...")
-        # Base.metadata.create_all 會重新建立所有表格
         Base.metadata.create_all(bind=engine)
         logger.info("所有表格已成功重新建立。資料庫現在是空的。")
 
@@ -51,9 +65,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.yes:
-        logger.info("已接收到 --yes 確認旗標，開始執行資料庫重設...")
-        reset_db()
+        # 只有在確認後才執行主要邏輯
+        main()
     else:
-        logger.warning("這是一個破壞性操作，將會清空所有資料。")
-        logger.warning("請加上 --yes 或 -y 旗標來確認執行。")
-        logger.warning("範例: python reset_database.py --yes")
+        # 在執行主要邏輯前，日誌系統可能尚未設定，但此處使用 print 或預設 logger 亦可
+        print("警告: 這是一個破壞性操作，將會清空所有資料。")
+        print("警告: 請加上 --yes 或 -y 旗標來確認執行。")
+        print("警告: 範例: python reset_db.py --yes")
