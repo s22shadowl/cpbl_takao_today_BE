@@ -5,9 +5,9 @@ import time
 import logging
 from playwright.sync_api import sync_playwright, expect
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
-from app.crud import players
+from app.crud import games, players
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
 from app.config import settings, TEAM_CLUB_CODES
@@ -82,7 +82,7 @@ def _process_filtered_games(
                 logger.info(
                     f"[E2E] 正在儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
                 )
-                game_id_in_db = players.store_game_and_get_id(db, game_info)
+                game_id_in_db = games.store_game_and_get_id(db, game_info)
                 if not game_id_in_db:
                     logger.warning(
                         f"[E2E] 無法儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
@@ -142,7 +142,7 @@ def _process_filtered_games(
                         continue
 
                 logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-                game_id_in_db = players.store_game_and_get_id(db, game_info)
+                game_id_in_db = games.store_game_and_get_id(db, game_info)
                 if not game_id_in_db:
                     continue
                 box_score_url = game_info.get("box_score_url")
@@ -302,38 +302,34 @@ def _process_filtered_games(
 
 
 # --- 主功能函式 ---
-def scrape_single_day(specific_date=None):
-    """【功能一】專門抓取並處理指定單日的比賽數據。"""
-    today = datetime.date.today()
-    target_date_str = specific_date if specific_date else today.strftime("%Y-%m-%d")
-    logger.info(f"--- 開始執行 [單日模式]，目標日期: {target_date_str} ---")
+def scrape_single_day(
+    specific_date: str,  # 仍然需要這個參數用於日誌和檢查
+    games_for_day: List[Dict[str, Optional[str]]],  # 新增這個參數，直接傳入當天比賽列表
+    update_season_stats: bool = True,
+):
+    """【功能一】專門抓取並處理指定單日的比賽數據。
+    Args:
+        specific_date (str): 指定日期，格式 YYYY-MM-DD。用於日誌和日期檢查。
+        games_for_day (List[Dict[str, Optional[str]]]): 該日期所有需要處理的比賽資訊列表。
+        update_season_stats (bool, optional): 是否執行球季累積數據的抓取。預設為 True。
+    """
+    logger.info(f"--- 開始執行 [單日模式]，目標日期: {specific_date} ---")
 
-    try:
-        target_date_obj = datetime.datetime.strptime(target_date_str, "%Y-%m-%d").date()
-    except ValueError:
-        logger.error(f"日期格式錯誤: {target_date_str}")
+    # 注意：這裡不再檢查 target_date_obj > today 的邏輯，因為這個檢查應該由呼叫方負責。
+    # 並且由於現在是直接接收 games_for_day，也不需要再轉換日期格式或檢查無效日期。
+
+    if update_season_stats:
+        scrape_and_store_season_stats()
+
+    # 直接使用傳入的 games_for_day 列表
+    if not games_for_day:
+        logger.info(
+            f"--- [單日模式] 目標日期 {specific_date} 沒有找到比賽資料，任務中止 ---"
+        )
         return
 
-    if target_date_obj > today and not settings.E2E_TEST_MODE:
-        logger.warning(f"目標日期 {target_date_str} 是未來日期，任務中止。")
-        return
-
-    scrape_and_store_season_stats()
-
-    html_content = fetcher.fetch_schedule_page(
-        target_date_obj.year, target_date_obj.month
-    )
-    if not html_content:
-        logger.info("--- [單日模式] 因無法獲取月賽程而中止 ---")
-        return
-
-    all_month_games = schedule.parse_schedule_page(html_content, target_date_obj.year)
-    games_for_day = [
-        game for game in all_month_games if game.get("game_date") == target_date_str
-    ]
-    # 【修改】從 settings 讀取目標球隊列表並傳遞下去
     _process_filtered_games(games_for_day, target_teams=settings.TARGET_TEAMS)
-    logger.info("--- [單日模式] 執行完畢 ---")
+    logger.info(f"--- [單日模式] 日期 {specific_date} 執行完畢 ---")
 
 
 def scrape_entire_month(month_str=None):
