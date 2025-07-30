@@ -1,3 +1,5 @@
+# app/main.py
+
 import logging
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -5,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.logging_config import setup_logging
-from app.api import games, players, analysis, tasks
+from app.api import games, players, analysis, system, tasks
 
 logger = logging.getLogger(__name__)
 
@@ -34,3 +36,4 @@ app.include_router(games.router)
 app.include_router(players.router)
 app.include_router(analysis.router)
 app.include_router(tasks.router)
+app.include_router(system.router)

@@ -1,0 +1,25 @@
+# .github/workflows/health_check.yml
+
+name: Production Health Check
+
+on:
+  # schedule:
+  # 每小時執行，目前未啟動
+  # cron: '0 * * * *'
+  # 允許手動從 GitHub Actions 頁面觸發
+  workflow_dispatch:
+
+jobs:
+  check-health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check production service health
+        # 使用 curl 指令檢查健康檢查端點。
+        # --fail: 讓 curl 在收到 HTTP 伺服器錯誤 (如 4xx, 5xx) 時，回傳一個錯誤碼，從而使 workflow 失敗。
+        # --silent: 隱藏進度條。
+        # --show-error: 在失敗時顯示錯誤訊息。
+        # --location: 自動跟隨重導向。
+        #
+        # **注意**: 請將 URL 替換為你自己的生產環境 URL。
+        run: |
+          curl --fail --silent --show-error --location "https://cpbl-takao-today-be.fly.dev/api/system/health"
