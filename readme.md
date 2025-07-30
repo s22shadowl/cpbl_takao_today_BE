@@ -295,3 +295,29 @@ python bulk_import.py upload
     fly deploy
     ```flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
     ````
+
+## 本地日誌查看技巧 (Local Log Viewing)
+
+由於主控台日誌已改為結構化的 JSON 格式，直接查看 docker compose logs 的輸出可能會不易閱讀。建議搭配使用命令列 JSON 處理工具 jq 來美化、上色及過濾日誌。
+
+# 前置需求:
+
+請先確保你的系統已安裝 jq。若未使用，可透過你的套件管理器安裝 (例如在 Ubuntu/WSL 中執行 sudo apt-get install jq)。
+
+# 基本用法 (美化輸出):
+
+使用管道 (pipe) 將 Docker 日誌傳遞給 jq，可以立即獲得格式化且帶有語法高亮的輸出。
+
+# 查看 web 服務的美化日誌
+
+docker compose logs web | jq
+
+# 持續追蹤 worker 服務的美化日誌
+
+docker compose logs -f worker | jq
+進階用法 (依 request_id 過濾):
+當你需要追蹤單一 API 請求的完整生命週期時，可以利用我們新增的 request_id 欄位進行過濾。
+
+# 只顯示特定 request_id 的日誌記錄
+
+docker compose logs web | jq 'select(.request_id == "YOUR_REQUEST_ID_HERE")'

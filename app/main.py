@@ -7,7 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.logging_config import setup_logging
-from app.api import games, players, analysis, system, tasks
+from app.api import games, players, analysis, tasks, system
+
+# 導入新的 middleware
+from app.middleware import RequestContextMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+# --- 掛載所有 Middleware ---
+# 將 RequestContextMiddleware 加在最前面，以確保所有後續處理都能取用到 request_id
+app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
