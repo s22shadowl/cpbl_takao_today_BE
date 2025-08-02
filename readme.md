@@ -1,32 +1,33 @@
-# CPBL 特定球員數據追蹤後端專案
+# CPBL 數據後端專案 (v5.2)
 
 ## 專案總覽 (Project Overview)
 
-本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務。它採用容器化技術（Docker）進行封裝，並已成功部署至 Fly.io 雲端平台。
+本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務，旨在提供一個通用、穩健且可擴展的數據平台。它採用容器化技術（Docker）封裝，並已成功部署至 Fly.io 雲端平台。
 
-服務核心功能是自動化爬取比賽賽程、逐場比賽結果、以及特定球員的詳細攻守數據。架構上，採用了非同步任務佇列（Dramatiq + Redis）來處理耗時的爬蟲任務，確保 API 伺服器的回應速度與穩定性。所有爬取的資料均儲存於雲端 PostgreSQL 資料庫，並透過一個受 API 金鑰保護的 RESTful API 提供外部存取與任務觸發功能。
+服務核心功能是自動化爬取比賽賽程、逐場比賽的詳細攻守數據（包含所有球員的逐打席紀錄），以及球員的球季數據歷史。架構上，採用非同步任務佇列（Dramatiq + Redis）來處理耗時的爬蟲任務，並透過一個受 API 金鑰保護的 RESTful API 提供從基本查詢到複雜情境分析的多種數據需求。
 
 ## 主要特色 (Features)
 
-- **自動化數據抓取**: 可透過排程或手動 API 觸發，抓取全年度賽程、每日比賽結果與球員的逐打席詳細記錄。
-- **穩健的背景任務**: 使用 Dramatiq 與 Redis 任務佇列，將耗時的爬蟲工作與主應用程式分離，提升系統穩定性與回應速度。
-- **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發環境，確保從本地到生產環境的一致性。
-- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移，確保開發與生產環境的資料庫結構同步。
-- **雲端原生架構**: 部署於 Fly.io 平台，將 API 服務 (`web`) 與爬蟲任務 (`worker`) 拆分為獨立的服務實體，易於獨立擴展與管理。
-- **RESTful API**: 基於 FastAPI 框架，提供資料查詢與手動任務觸發的 API，並透過 API 金鑰進行安全驗證。
-- **自動化品質控管**: 整合 pre-commit hooks（Ruff, Black）與 GitHub Actions CI/CD 流程，自動化執行程式碼格式化、風格檢查與單元測試。
+- **通用數據抓取**: 自動抓取並儲存賽季中所有球隊、所有球員的逐打席紀錄，而非針對特定目標。
+- **歷史數據追蹤**: 記錄球員球季數據的歷史快照，可供分析其表現趨勢。
+- **穩健的背景任務**: 使用 Dramatiq 與 Redis，將耗時的爬蟲工作與 API 伺服器分離。
+- **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。
+- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。
+- **雲端原生架構**: 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務。
+- **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力。
+- **服務健康監控**: 內建 `/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+- **結構化日誌與追蹤**: 所有日誌均為 JSON 格式，並為每個請求注入 `request_id`，大幅簡化問題排查。
+- **自動化品質控管**: 整合 pre-commit (Ruff, Black) 與 GitHub Actions CI/CD 流程。
 
 ## 生產環境架構 (Production Architecture)
 
 本專案在 Fly.io 上的生產環境由以下幾個核心元件組成：
 
 - **Fly App (`cpbl-takao-today-be`)**: 專案的主應用程式容器。
-  - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有來自外部的 API 請求。
-  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門監聽並執行來自 Redis 佇列的耗時爬蟲任務。
-- **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務，作為專案的主資料來源。
-- **Aiven Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 用於任務派發與管理的訊息代理 (Message Broker)。
-
-**資料流示意圖:**
+  - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求。
+  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行來自 Redis 佇列的耗時爬蟲任務。
+- **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務。
+- **Aiven Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 所需的訊息代理。
 
 ```mermaid
 graph TD
@@ -74,6 +75,7 @@ graph TD
 | **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff, Black |
 | **測試框架**           | pytest, pytest-mock, pytest-playwright  |
 | **設定管理**           | pydantic-settings                       |
+| **日誌**               | python-json-logger                      |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -214,17 +216,17 @@ curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/a
 
 ---
 
-## 執行環境
+#### 執行環境
 
 此腳本應在專案的根目錄下，於已啟動本地 Python 虛擬環境的終端機中執行。它會分別讀取 `.env`（本地資料庫）和 `.env.prod`（雲端資料庫）檔案來取得連線設定。
 
 ---
 
-## 步驟一：爬取資料至本地資料庫
+#### 步驟一：爬取資料至本地資料庫
 
 此步驟會將指定日期範圍的比賽數據，完整地爬取並儲存到你本地的 PostgreSQL 開發資料庫中。
 
-### 指令格式:
+##### 指令格式:
 
 ```bash
 python bulk_import.py scrape --start YYYY-MM-DD [--end YYYY-MM-DD]
@@ -233,7 +235,7 @@ python bulk_import.py scrape --start YYYY-MM-DD [--end YYYY-MM-DD]
 - `--start` (必要): 爬取的起始日期，格式為 `YYYY-MM-DD`。
 - `--end` (可選): 爬取的結束日期，格式為 `YYYY-MM-DD`。如果省略，預設為執行指令的當天日期。
 
-### 範例:
+##### 範例:
 
 ```bash
 # 爬取 2024 年 4 月 1 日至 2024 年 4 月 10 日的數據
@@ -244,11 +246,11 @@ python bulk_import.py scrape --start 2024-04-01 --end 2024-04-10
 
 ---
 
-## 步驟二：從本地上傳資料至雲端
+#### 步驟二：從本地上傳資料至雲端
 
 在確認本地資料庫的數據完整無誤後，執行此步驟，將本地資料庫中的所有內容同步至雲端生產資料庫。
 
-### 指令格式:
+##### 指令格式:
 
 ```bash
 python bulk_import.py upload
@@ -263,12 +265,27 @@ python bulk_import.py upload
 
 整個過程是一個完整的資料庫交易，若中途發生任何錯誤，所有變更都會被復原 (rollback)。
 
-### 範例:
+##### 範例:
 
 ```bash
 # 將本地資料庫的所有內容同步至雲端
 python bulk_import.py upload
 ```
+
+## 資料庫遷移 (Database Migrations)
+
+本專案使用 Alembic 來管理資料庫結構的變更。
+
+- **當你修改 `app/models.py` 中的模型後**，你需要產生一個新的遷移腳本：
+  ```bash
+  # 在 web 容器中自動產生遷移腳本
+  docker compose run --rm web alembic revision --autogenerate -m "描述你的變更"
+  ```
+- **將變更應用到資料庫**:
+  ```bash
+  # 在 web 容器中執行 upgrade
+  docker compose run --rm web alembic upgrade head
+  ```
 
 ## 程式碼品質與 CI/CD
 
@@ -291,33 +308,32 @@ python bulk_import.py upload
 
 2.  **部署應用**:
     設定完 secrets 後，在專案根目錄執行以下指令即可觸發部署。
-    ````bash
+    ```bash
     fly deploy
-    ```flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
-    ````
+    ```
+    `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
 
 ## 本地日誌查看技巧 (Local Log Viewing)
 
-由於主控台日誌已改為結構化的 JSON 格式，直接查看 docker compose logs 的輸出可能會不易閱讀。建議搭配使用命令列 JSON 處理工具 jq 來美化、上色及過濾日誌。
+由於主控台日誌已改為結構化的 JSON 格式，建議搭配使用命令列工具 `jq` 來美化、上色及過濾日誌。
 
-# 前置需求:
+**前置需求**:
+請先確保你的系統已安裝 `jq` (例如在 Ubuntu/WSL 中執行 `sudo apt-get install jq`)。
 
-請先確保你的系統已安裝 jq。若未使用，可透過你的套件管理器安裝 (例如在 Ubuntu/WSL 中執行 sudo apt-get install jq)。
+**美化輸出**:
 
-# 基本用法 (美化輸出):
-
-使用管道 (pipe) 將 Docker 日誌傳遞給 jq，可以立即獲得格式化且帶有語法高亮的輸出。
-
+```bash
 # 查看 web 服務的美化日誌
-
 docker compose logs web | jq
 
 # 持續追蹤 worker 服務的美化日誌
-
 docker compose logs -f worker | jq
-進階用法 (依 request_id 過濾):
-當你需要追蹤單一 API 請求的完整生命週期時，可以利用我們新增的 request_id 欄位進行過濾。
+```
 
+**依 request_id 過濾**:
+當你需要追蹤單一 API 請求的完整生命週期時，可利用我們新增的 `request_id` 欄位進行過濾。
+
+```bash
 # 只顯示特定 request_id 的日誌記錄
-
 docker compose logs web | jq 'select(.request_id == "YOUR_REQUEST_ID_HERE")'
+```
