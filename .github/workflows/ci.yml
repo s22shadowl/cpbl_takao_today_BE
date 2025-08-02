@@ -53,11 +53,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install ruff black pytest requests
+          # Install tools for CI, including the new audit tool
+          pip install ruff black pytest requests pip-audit
 
       - name: Install Playwright Browsers
         run: |
           playwright install chromium --with-deps
+
+      # --- NEW STEP ADDED ---
+      - name: Scan for vulnerabilities
+        run: |
+          # Scan dependencies listed in requirements.txt for known vulnerabilities
+          pip-audit -r requirements.txt
 
       - name: Lint and Format Check
         run: |
