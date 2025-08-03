@@ -6,7 +6,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from tenacity import retry, stop_after_delay, wait_fixed
 
-# 【修改】不再需要 Alembic，改為直接從 app.db 導入 Base
+# 確保在呼叫 Base.metadata 前，所有模型都已載入
+from app import models  # noqa: F401
 from app.db import Base
 from app.config import settings
 
@@ -15,42 +16,47 @@ API_BASE_URL = "http://localhost:8000"
 POLLING_TIMEOUT = 60
 POLLING_INTERVAL = 1
 
-# --- 資料庫連線設定 ---
-DB_URL = str(settings.DATABASE_URL)
-engine = create_engine(DB_URL)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 
 # --- Fixtures ---
 
 
-@pytest.fixture(scope="session", autouse=True)
-def apply_migrations():
-    """
-    【修改】一個 session 等級、自動執行的 fixture。
-    在所有 E2E 測試開始前，直接使用 SQLAlchemy metadata 建立資料表。
-    這種方法更為穩健，能確保測試環境的絕對乾淨。
-    """
-    print("\n[E2E Setup] 正在設定 E2E 測試資料庫...")
+# 核心修正 1: 建立一個 session scope 的 fixture 來集中管理 engine。
+# 這能確保所有測試函式共享同一個 engine 實例，避免多個 engine 實例造成衝突。
+@pytest.fixture(scope="session")
+def e2e_engine():
+    """建立並提供一個 session-scope 的 SQLAlchemy engine。"""
+    engine = create_engine(str(settings.DATABASE_URL))
+    yield engine
+    # 在所有測試結束後，關閉 engine 的連線池
+    engine.dispose()
 
-    # 【修改】使用 SQLAlchemy metadata 直接刪除和建立所有資料表
+
+# 核心修正 2: 將 fixture 的 scope 改為 "function"，並接收 e2e_engine。
+# 這能確保每個測試函式執行前，資料庫都會使用同一個 engine 被完整地重置。
+@pytest.fixture(scope="function", autouse=True)
+def setup_e2e_database(e2e_engine):
+    """
+    一個 function 等級、自動執行的 fixture。
+    在每個 E2E 測試函式開始前，使用共享的 engine 刪除並重建所有資料表。
+    """
+    print("\n[E2E Setup] 正在為測試函式設定資料庫...")
     print("[E2E Setup] 正在刪除所有舊資料表...")
-    Base.metadata.drop_all(bind=engine)
+    Base.metadata.drop_all(bind=e2e_engine)
     print("[E2E Setup] 正在建立所有新資料表...")
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(bind=e2e_engine)
     print("[E2E Setup] 資料庫結構已建立。")
 
-    yield
 
-    # Teardown 時再執行一次刪除，確保測試結束後環境是乾淨的
-    print("\n[E2E Teardown] 正在清理 E2E 測試資料庫...")
-    Base.metadata.drop_all(bind=engine)
-    print("[E2E Teardown] 資料庫已還原。")
-
-
+# 核心修正 3: 修改 db_session fixture，使其也依賴 e2e_engine。
 @pytest.fixture(scope="function")
-def db_session():
-    """提供一個直接連線到測試 PostgreSQL 資料庫的 session。"""
+def db_session(e2e_engine):
+    """
+    提供一個直接連線到測試 PostgreSQL 資料庫的 session。
+    此 session 是從一個與 e2e_engine 綁定的 sessionmaker 建立的。
+    """
+    TestingSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=e2e_engine
+    )
     db = TestingSessionLocal()
     try:
         yield db
@@ -72,14 +78,6 @@ def test_scrape_daily_job_flow(db_session):
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
     payload = {"mode": "daily", "date": target_date}
 
-    # 前置清理：現在資料表已存在，我們可以安全地刪除資料
-    # 順序很重要：先刪除子表，再刪除父表，以避免違反外鍵約束
-    with engine.connect() as connection:
-        connection.execute(text("DELETE FROM at_bat_details;"))
-        connection.execute(text("DELETE FROM player_game_summary;"))
-        connection.execute(text("DELETE FROM game_results;"))
-        connection.commit()
-
     # 2. 執行 (Act)
     response = requests.post(
         f"{API_BASE_URL}/api/run_scraper", headers=headers, json=payload
@@ -93,6 +91,8 @@ def test_scrape_daily_job_flow(db_session):
     @retry(stop=stop_after_delay(POLLING_TIMEOUT), wait=wait_fixed(POLLING_INTERVAL))
     def _check_for_data_in_db():
         print(f"[E2E] 正在輪詢資料庫，檢查 ID: {expected_cpbl_game_id}...")
+        # 確保每次輪詢都使用最新的 session 狀態
+        db_session.expire_all()
         game = db_session.execute(
             text(
                 f"SELECT * FROM game_results WHERE cpbl_game_id = '{expected_cpbl_game_id}'"
@@ -111,5 +111,4 @@ def test_scrape_daily_job_flow(db_session):
         assert created_game.status == "已完成"
 
     except Exception as e:
-        # 使用 tenacity 的 RetryError 可能會包裝原始的 AssertionError
         pytest.fail(f"E2E 測試失敗: {e}")

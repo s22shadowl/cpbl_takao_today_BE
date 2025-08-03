@@ -1,2 +1,5 @@
 [tool.pytest.ini_options]
 pythonpath = "."
+markers = [
+    "e2e: marks tests as end-to-end tests",
+]

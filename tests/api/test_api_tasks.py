@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from unittest.mock import ANY  # 引入 ANY
 
 from app.api.dependencies import get_api_key
 from app.main import app
@@ -28,6 +29,12 @@ def override_get_api_key_success():
 def test_run_scraper_manually(
     client: TestClient, mocker, mode, date_param, expected_task_str
 ):
+    # 核心修正：模擬 API 端點內部的外部呼叫，使其與網路無關
+    mocker.patch(
+        "app.api.tasks.fetcher.fetch_schedule_page", return_value="<html></html>"
+    )
+    mocker.patch("app.api.tasks.schedule.parse_schedule_page", return_value=[])
+
     mock_task = mocker.patch(expected_task_str)
     app.dependency_overrides[get_api_key] = override_get_api_key_success
     headers = {"X-API-Key": "any-key-will-do"}
@@ -35,7 +42,14 @@ def test_run_scraper_manually(
     response = client.post("/api/run_scraper", headers=headers, json=request_payload)
     del app.dependency_overrides[get_api_key]
     assert response.status_code == 202
-    mock_task.send.assert_called_once_with(date_param)
+
+    # 核心修正：根據不同模式，驗證不同的函式呼叫簽名
+    if mode == "daily":
+        # 對於 daily 模式，預期有兩個參數：日期字串和一個任意的列表
+        mock_task.send.assert_called_once_with(date_param, ANY)
+    else:
+        # 對於 monthly/yearly 模式，預期只有一個參數
+        mock_task.send.assert_called_once_with(date_param)
 
 
 def test_run_scraper_manually_invalid_mode(client: TestClient):

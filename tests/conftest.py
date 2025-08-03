@@ -8,19 +8,38 @@ import logging.config
 from sqlalchemy.pool import StaticPool
 
 
-# **核心修正 1**: 將 apply_test_settings 的 scope 改為 "function"，
-# 以匹配它所依賴的 monkeypatch fixture 的 scope。
-# autouse=True 確保它依然會在每個測試函式前自動執行。
+# 核心修正 1: 使用 pytest hook 自動為 e2e 測試加上標記
+def pytest_collection_modifyitems(config, items):
+    """
+    在 pytest 收集完所有測試項目後，自動為位於 'e2e' 目錄下的測試
+    加上 'e2e' 標記。
+    """
+    for item in items:
+        # 檢查測試項目的路徑是否包含 'e2e' 這個目錄名稱
+        if "e2e" in item.path.parts:
+            item.add_marker(pytest.mark.e2e)
+
+
+# 核心修正 2: 簡化 fixture，使其只處理非 E2E 測試的環境設定
 @pytest.fixture(scope="function", autouse=True)
-def apply_test_settings(monkeypatch):
-    """為每個測試函式設定必要的環境變數，以滿足 Pydantic 的驗證。"""
-    monkeypatch.setenv("POSTGRES_USER", "test_user")
-    monkeypatch.setenv("POSTGRES_PASSWORD", "test_password")
-    monkeypatch.setenv("POSTGRES_DB", "test_db")
-    monkeypatch.setenv("POSTGRES_PORT", "5433")
-    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-    monkeypatch.setenv("DRAMATIQ_BROKER_URL", "redis://localhost:6379/1")
-    monkeypatch.setenv("API_KEY", "test-api-key-for-pytest")
+def apply_test_settings(monkeypatch, request):
+    """
+    為每個測試函式設定必要的環境變數。
+    此 fixture 會檢查測試是否有 'e2e' 標記。
+    - 如果有，它會直接跳過，不執行任何操作，以避免污染由 Docker 管理的 E2E 環境。
+    - 如果沒有，它才會設定單元測試所需的環境 (如記憶體資料庫)。
+    """
+    if "e2e" in request.node.keywords:
+        # 對於 E2E 測試，此 fixture 不執行任何操作。
+        # E2E 測試的環境應由 Docker Compose 和 .env 檔案完全控制。
+        yield
+        return
+    else:
+        # 為單元/整合測試設定環境變數
+        monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+        monkeypatch.setenv("DRAMATIQ_BROKER_URL", "redis://localhost:6379/1")
+        monkeypatch.setenv("API_KEY", "test-api-key-for-pytest")
+        yield
 
 
 # 將 engine 的建立延遲到 fixture 中。

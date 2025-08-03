@@ -3,7 +3,7 @@
 import logging
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
-from typing import Optional
+from typing import Optional, List, Dict
 import ssl
 
 from app.config import settings
@@ -37,7 +37,6 @@ def task_update_schedule_and_reschedule():
     """
     【Dramatiq版】這是一個背景任務，負責執行完整的賽程更新與排程器重設。
     """
-    # 將 import 移至函式內部，避免潛在的循環匯入問題
     from app.scheduler import setup_scheduler
     from app.core import schedule_scraper
 
@@ -53,16 +52,16 @@ def task_update_schedule_and_reschedule():
 
 
 @dramatiq.actor
-def task_scrape_single_day(date_str: Optional[str] = None):
+def task_scrape_single_day(
+    date_str: str, games_for_day: List[Dict[str, Optional[str]]]
+):
     """
     【Dramatiq版】抓取單日比賽數據的任務。
     """
-    logger.info(f"--- Dramatiq Worker: 執行單日爬蟲任務 for {date_str or '今天'} ---")
+    logger.info(f"--- Dramatiq Worker: 執行單日爬蟲任務 for {date_str} ---")
     try:
-        scraper.scrape_single_day(date_str)
-        logger.info(
-            f"--- Dramatiq Worker: 單日爬蟲任務 for {date_str or '今天'} 執行完畢 ---"
-        )
+        scraper.scrape_single_day(date_str, games_for_day)
+        logger.info(f"--- Dramatiq Worker: 單日爬蟲任務 for {date_str} 執行完畢 ---")
     except Exception as e:
         logger.error(
             f"Dramatiq Worker 在執行單日爬蟲任務時發生嚴重錯誤: {e}", exc_info=True
