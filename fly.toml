@@ -59,16 +59,3 @@ primary_region = 'sin'
     # protocol = "http"
     # 失敗後關閉機器
     # restart_limit = 0
-
-# --- 新增 ---
-# 專門為 worker 程序設定服務與啟停策略
-[[services]]
-  processes = ["worker"]
-  internal_port = 8081
-
-  # 允許 worker 機器在閒置時自動關閉
-  auto_stop_machines = true
-  auto_start_machines = false # 我們將手動啟動它
-
-  # 預設保持 0 台機器運行，以節省費用
-  min_machines_running = 0
