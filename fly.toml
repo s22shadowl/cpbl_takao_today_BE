@@ -6,12 +6,10 @@ primary_region = 'sin'
 [build]
   dockerfile = "Dockerfile"
 
-# 原有的 [processes] 區塊保持不變
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
   worker = "dramatiq app.tasks"
 
-# 原有的 [[services]] 區塊是針對 web 程序的，保持不變
 [[services]]
   processes = ["web"]
   protocol = "tcp"
@@ -31,31 +29,30 @@ primary_region = 'sin'
     hard_limit = 200
     soft_limit = 150
 
-  # 確保 Web 服務永不休眠
   auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
 
   [[services.checks]]
-    type = "tcp"
-    port = 8080
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "30s"
+  type = "tcp"
+  port = 8080
+  interval = "15s"
+  timeout = "2s"
+  grace_period = "30s"
 
   # 設定 HTTP 健康檢查
   [[services.http_checks]]
-    # 每小時檢查一次，目前未啟動
-    # interval = "1h"
+    # 每小時檢查一次
+    interval = "1h"
     # 每次檢查的超時時間
-    # timeout = "30s"
+    timeout = "30s"
     # 機器啟動後的寬限期
-    # grace_period = "30s"
+    grace_period = "30s"
     # 使用 GET 方法
-    # method = "get"
+    method = "get"
     # 指向我們新建的健康檢查端點
-    # path = "/api/system/health"
+    path = "/api/system/health"
     # 使用 http 協定 (在 Fly.io 內部網路)
-    # protocol = "http"
+    protocol = "http"
     # 失敗後關閉機器
-    # restart_limit = 0
+    restart_limit = 0
