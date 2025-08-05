@@ -14,6 +14,7 @@ from app.config import settings, TEAM_CLUB_CODES
 from app.core import fetcher
 from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
+from app.exceptions import ScraperError  # 引入基礎錯誤類別
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +35,11 @@ def scrape_and_store_season_stats():
     team_stats_url = f"{settings.TEAM_SCORE_URL}?ClubNo={club_no}"
     logger.info(f"--- 開始抓取球季累積數據，URL: {team_stats_url} ---")
 
+    # 錯誤會由 fetcher 拋出
     html_content = fetcher.get_dynamic_page_content(
         team_stats_url, wait_for_selector="div.RecordTable"
     )
-    if not html_content:
-        logger.error("無法獲取球隊數據頁面內容。")
-        return
-
+    # 錯誤會由 parser 拋出
     season_stats_list = season_stats.parse_season_stats_page(html_content)
     if not season_stats_list:
         logger.info("未解析到任何球員的球季數據。")
@@ -48,11 +47,9 @@ def scrape_and_store_season_stats():
 
     db = SessionLocal()
     try:
+        # 核心修正：移除 try/except，讓資料庫錯誤可以被上層 actor 捕捉
         players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
-    except Exception as e:
-        logger.error(f"儲存球季累積數據時發生錯誤，交易已復原: {e}", exc_info=True)
-        db.rollback()
     finally:
         if db:
             db.close()
@@ -63,7 +60,7 @@ def scrape_and_store_season_stats():
 def _process_filtered_games(
     games_to_process: List[dict], target_teams: Optional[List[str]] = None
 ):
-    """【修改】處理比賽列表，並可選擇性地只處理指定球隊的比賽。"""
+    """處理比賽列表，並可選擇性地只處理指定球隊的比賽。"""
     if not games_to_process:
         return
     logger.info(f"準備處理 {len(games_to_process)} 場比賽...")
@@ -130,16 +127,11 @@ def _process_filtered_games(
         for game_info in games_to_process:
             db = SessionLocal()
             try:
-                if game_info.get("status") != "已完成":
+                if target_teams and not any(
+                    team in target_teams
+                    for team in [game_info.get("home_team"), game_info.get("away_team")]
+                ):
                     continue
-
-                # 【修改】如果提供了 target_teams 列表，則只處理相關的比賽
-                if target_teams:
-                    if (
-                        game_info.get("home_team") not in target_teams
-                        and game_info.get("away_team") not in target_teams
-                    ):
-                        continue
 
                 logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
                 game_id_in_db = games.store_game_and_get_id(db, game_info)
@@ -153,7 +145,6 @@ def _process_filtered_games(
                 page.wait_for_selector(
                     "div.GameBoxDetail", state="visible", timeout=30000
                 )
-                # 【修改】將 target_teams 參數傳遞給 parser
                 all_players_data = box_score.parse_box_score_page(
                     page.content(), target_teams=target_teams
                 )
@@ -284,18 +275,18 @@ def _process_filtered_games(
                         player_data["at_bats_details"].append(merged_at_bat)
 
                 players.store_player_game_data(db, game_id_in_db, all_players_data)
-
                 db.commit()
                 logger.info(
                     f"成功提交比賽 {game_info.get('cpbl_game_id')} 的所有資料到資料庫。"
                 )
 
-            except Exception as e:
+            except Exception:
                 logger.error(
-                    f"處理比賽 {game_info.get('cpbl_game_id')} 時發生未知錯誤，將復原此比賽的所有變更: {e}",
+                    f"處理比賽 {game_info.get('cpbl_game_id')} 時發生錯誤，將復原此比賽的所有變更。",
                     exc_info=True,
                 )
                 db.rollback()
+                raise
             finally:
                 if db:
                     db.close()
@@ -303,25 +294,16 @@ def _process_filtered_games(
 
 # --- 主功能函式 ---
 def scrape_single_day(
-    specific_date: str,  # 仍然需要這個參數用於日誌和檢查
-    games_for_day: List[Dict[str, Optional[str]]],  # 新增這個參數，直接傳入當天比賽列表
+    specific_date: str,
+    games_for_day: List[Dict[str, Optional[str]]],
     update_season_stats: bool = True,
 ):
-    """【功能一】專門抓取並處理指定單日的比賽數據。
-    Args:
-        specific_date (str): 指定日期，格式 YYYY-MM-DD。用於日誌和日期檢查。
-        games_for_day (List[Dict[str, Optional[str]]]): 該日期所有需要處理的比賽資訊列表。
-        update_season_stats (bool, optional): 是否執行球季累積數據的抓取。預設為 True。
-    """
+    """【功能一】專門抓取並處理指定單日的比賽數據。"""
     logger.info(f"--- 開始執行 [單日模式]，目標日期: {specific_date} ---")
-
-    # 注意：這裡不再檢查 target_date_obj > today 的邏輯，因為這個檢查應該由呼叫方負責。
-    # 並且由於現在是直接接收 games_for_day，也不需要再轉換日期格式或檢查無效日期。
 
     if update_season_stats:
         scrape_and_store_season_stats()
 
-    # 直接使用傳入的 games_for_day 列表
     if not games_for_day:
         logger.info(
             f"--- [單日模式] 目標日期 {specific_date} 沒有找到比賽資料，任務中止 ---"
@@ -355,20 +337,14 @@ def scrape_entire_month(month_str=None):
     html_content = fetcher.fetch_schedule_page(
         target_date_obj.year, target_date_obj.month
     )
-    if not html_content:
-        return
-
     all_month_games = schedule.parse_schedule_page(html_content, target_date_obj.year)
 
-    if target_date_obj.year == today.year and target_date_obj.month == today.month:
-        games_to_process = [
-            game
-            for game in all_month_games
-            if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date() <= today
-        ]
-        _process_filtered_games(games_to_process, target_teams=settings.TARGET_TEAMS)
-    else:
-        _process_filtered_games(all_month_games, target_teams=settings.TARGET_TEAMS)
+    games_to_process = [
+        game
+        for game in all_month_games
+        if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date() <= today
+    ]
+    _process_filtered_games(games_to_process, target_teams=settings.TARGET_TEAMS)
 
     logger.info("--- [逐月模式] 執行完畢 ---")
 
@@ -387,22 +363,30 @@ def scrape_entire_year(year_str=None):
     start_month = 3
 
     for month in range(start_month, end_month + 1):
-        html_content = fetcher.fetch_schedule_page(year_to_scrape, month)
-        if html_content:
+        try:
+            html_content = fetcher.fetch_schedule_page(year_to_scrape, month)
             all_month_games = schedule.parse_schedule_page(html_content, year_to_scrape)
             logger.info(
                 f"月份 {year_to_scrape}-{month:02d} 共解析到 {len(all_month_games)} 場比賽。"
             )
-            if all_month_games:
-                games_to_process = [
-                    game
-                    for game in all_month_games
-                    if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date()
-                    <= today
-                ]
-                _process_filtered_games(
-                    games_to_process, target_teams=settings.TARGET_TEAMS
-                )
+
+            games_to_process = [
+                game
+                for game in all_month_games
+                if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date()
+                <= today
+            ]
+            _process_filtered_games(
+                games_to_process, target_teams=settings.TARGET_TEAMS
+            )
+        except ScraperError:
+            # 核心修正：捕捉所有自訂的爬蟲錯誤
+            # 記錄詳細錯誤，但不中斷整個逐年爬蟲，讓其他月份可以繼續
+            logger.error(
+                f"處理月份 {year_to_scrape}-{month:02d} 時發生爬蟲錯誤，已跳過此月份。",
+                exc_info=True,
+            )
+
         logger.info(f"處理完 {year_to_scrape}-{month:02d}，稍作等待...")
         time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
     logger.info("--- [逐年模式] 執行完畢 ---")
