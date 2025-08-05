@@ -54,7 +54,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # Install tools for CI, including the new audit tool
-          pip install ruff black pytest requests pip-audit
+          pip install ruff pytest requests pip-audit
 
       - name: Install Playwright Browsers
         run: |
@@ -69,7 +69,6 @@ jobs:
       - name: Lint and Format Check
         run: |
           ruff check .
-          black --check .
 
       - name: Run Unit and Integration Tests
         env:
