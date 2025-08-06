@@ -1,0 +1,38 @@
+# .github/workflows/canary_test.yml
+
+name: 官網結構金絲雀測試 (Canary Test)
+
+on:
+  # 每日定時觸發
+  schedule:
+    # 使用 Cron 語法，此設定為每日 22:00 UTC 執行
+    # (台灣時間 CST+8，即每日早上 6:00)
+    - cron: "0 22 * * *"
+
+  # 允許手動從 GitHub Actions 頁面觸發此 workflow
+  workflow_dispatch:
+
+jobs:
+  run-canary-test:
+    name: 執行金絲雀測試
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 簽出程式碼 (Checkout Code)
+        uses: actions/checkout@v4
+
+      - name: 設定 Python 3.12 環境
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          # 使用快取來加速依賴項安裝
+          cache: "pip"
+
+      - name: 安裝專案依賴項
+        run: pip install -r requirements.txt
+
+      - name: 安裝 Playwright 瀏覽器及其系統依賴
+        run: playwright install chromium --with-deps
+
+      - name: 執行 Pytest (僅限 canary 標記)
+        run: pytest -m canary

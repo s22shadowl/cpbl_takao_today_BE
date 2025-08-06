@@ -79,7 +79,7 @@ jobs:
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: |
           # 執行除了 e2e 目錄以外的所有測試
-          pytest --ignore=tests/e2e
+          pytest -m "not e2e and not canary"
 
       - name: Run E2E Tests
         env:

@@ -2,4 +2,5 @@
 pythonpath = "."
 markers = [
     "e2e: marks tests as end-to-end tests",
+    "canary: Runs canary tests that hit the live CPBL website.",
 ]
