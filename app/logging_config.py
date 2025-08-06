@@ -34,6 +34,8 @@ LOGGING_CONFIG = {
         "json": {
             # 使用我們自訂的 Formatter
             "()": "app.logging_config.CustomJsonFormatter",
+            # [新增] 解決 JSON 日誌中文字元變成 \uXXXX 的問題
+            "json_ensure_ascii": False,
             # --- 修改: 移除固定的 format 字串，讓 formatter 自動包含所有欄位 ---
             # 當錯誤發生時，這會自動包含結構化的 exc_info 和 exc_text。
             "rename_fields": {

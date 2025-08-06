@@ -1,3 +1,5 @@
+# app/config.py
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional, Dict
 
@@ -17,6 +19,12 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     DRAMATIQ_BROKER_URL: str
     API_KEY: str
+
+    # [新增] 批次匯入腳本專用設定
+    # 將它們設為 Optional，這樣在主程式運行時若 .env 中沒有這些變數，也不會引發驗證錯誤
+    STAGING_DATABASE_URL: Optional[str] = None
+    PRODUCTION_DATABASE_URL: Optional[str] = None
+    BULK_IMPORT_DELAY_SECONDS: Optional[int] = 5
 
     # 其他應用程式設定
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://12-7.0.0.1:3000"]
