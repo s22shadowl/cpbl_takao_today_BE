@@ -60,7 +60,6 @@ jobs:
         run: |
           playwright install chromium --with-deps
 
-      # --- NEW STEP ADDED ---
       - name: Scan for vulnerabilities
         run: |
           # Scan dependencies listed in requirements.txt for known vulnerabilities
@@ -75,6 +74,9 @@ jobs:
           DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
           DRAMATIQ_BROKER_URL: redis://localhost:6379/0
           API_KEY: test-ci-key
+          TARGET_TEAM_NAME: "台鋼雄鷹"
+          TARGET_TEAMS: '["台鋼雄鷹"]'
+          TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: |
           # 執行除了 e2e 目錄以外的所有測試
           pytest --ignore=tests/e2e
@@ -87,6 +89,9 @@ jobs:
           PORT: 8000
           # 僅在此步驟啟用 E2E 測試模式
           E2E_TEST_MODE: "true"
+          TARGET_TEAM_NAME: "台鋼雄鷹"
+          TARGET_TEAMS: '["台鋼雄鷹"]'
+          TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: |
           # 啟動 Web 服務
           echo "Starting Web server..."

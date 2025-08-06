@@ -34,8 +34,8 @@ services:
 
   worker:
     build: .
-    # [修改] 為 dramatiq 指令加上內部超時，與 fly.toml 保持一致
-    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.tasks:redis_broker app.tasks --shutdown-timeout 570000"
+    # [修改] 對應地，將 dramatiq 的內部超時調整為 285 秒
+    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.tasks:redis_broker app.tasks --worker-shutdown-timeout 285000"
     volumes:
       - .:/code
     environment:

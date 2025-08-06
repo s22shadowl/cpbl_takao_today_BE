@@ -97,7 +97,7 @@ def test_task_update_schedule_success(mock_task_dependencies):
     tasks.task_update_schedule_and_reschedule()
 
     mock_schedule_scraper.scrape_cpbl_schedule.assert_called_once_with(
-        2025, 3, 10, include_past_games=True
+        2025, 3, 11, include_past_games=True
     )
     mock_setup_scheduler.assert_called_once()
 

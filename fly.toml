@@ -3,19 +3,17 @@
 app = 'cpbl-takao-today-be'
 primary_region = 'sin'
 
-# [新增] 為所有 process 設定優雅關閉參數
-# 當收到停止指令時，發送 SIGINT 信號
+# [修改] 將 kill_timeout 調整為 Fly.io 平台允許的最大值 5 分鐘
 kill_signal = "SIGINT"
-# 給予 10 分鐘 (600 秒) 的寬限時間，等待 process 處理完畢
-kill_timeout = "600s"
+kill_timeout = "300s"
 
 [build]
   dockerfile = "Dockerfile"
 
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
-  # [修改] 為 dramatiq 指令加上內部超時，設定為 570 秒 (9.5 分鐘)，略小於平台的 kill_timeout
-  worker = "dramatiq app.tasks --shutdown-timeout 570000"
+  # [修改] 對應地，將 dramatiq 的內部超時調整為 285 秒 (4 分鐘 45 秒)
+  worker = "dramatiq app.tasks --worker-shutdown-timeout 285000"
 
 [[services]]
   processes = ["web"]
