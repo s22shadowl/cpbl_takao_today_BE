@@ -1,32 +1,47 @@
-# CPBL 數據後端專案 (v5.2)
+# CPBL 數據後端專案 (v5.9+)
 
 ## 專案總覽 (Project Overview)
 
-本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務，旨在提供一個通用、穩健且可擴展的數據平台。它採用容器化技術（Docker）封裝，並已成功部署至 Fly.io 雲端平台。
+本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務，旨在提供一個通用、穩健且可擴展的數據平台。它採用容器化技術（Docker）封裝，並已成功部署至 Fly.io 雲端平台，且與 GitHub Actions 整合，實現了推送即部署的 CI/CD 流程。
 
 服務核心功能是自動化爬取比賽賽程、逐場比賽的詳細攻守數據（包含所有球員的逐打席紀錄），以及球員的球季數據歷史。架構上，採用非同步任務佇列（Dramatiq + Redis）來處理耗時的爬蟲任務，並透過一個受 API 金鑰保護的 RESTful API 提供從基本查詢到複雜情境分析的多種數據需求。
 
 ## 主要特色 (Features)
 
 - **通用數據抓取**: 自動抓取並儲存賽季中所有球隊、所有球員的逐打席紀錄，而非針對特定目標。
+
 - **歷史數據追蹤**: 記錄球員球季數據的歷史快照，可供分析其表現趨勢。
+
 - **穩健的背景任務**: 使用 Dramatiq 與 Redis，將耗時的爬蟲工作與 API 伺服器分離。
+
+- **智慧重試與錯誤處理**: (v5.4 新增) 能自動從網路問題中恢復，並區分可重試與致命錯誤。
+
 - **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。
+
 - **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。
-- **雲端原生架構**: 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務。
-- **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力。
-- **服務健康監控**: 內建 `/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+
+- **雲端原生架構**: (v5.9 更新) 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務，並整合 `Xvfb` 繞過反爬蟲機制。
+
+- **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力，並內建互動式 API 文件。
+
+- **服務健康監控與自癒**: (v5.2 更新) 內建 `/api/system/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+
 - **結構化日誌與追蹤**: 所有日誌均為 JSON 格式，並為每個請求注入 `request_id`，大幅簡化問題排查。
-- **自動化品質控管**: 整合 pre-commit (Ruff, Black) 與 GitHub Actions CI/CD 流程。
+
+- **自動化品質與安全**: (v5.3 更新) 整合 pre-commit (Ruff) 與 GitHub Actions CI/CD 流程，並透過 `pip-audit` 進行依賴項安全掃描。
 
 ## 生產環境架構 (Production Architecture)
 
 本專案在 Fly.io 上的生產環境由以下幾個核心元件組成：
 
 - **Fly App (`cpbl-takao-today-be`)**: 專案的主應用程式容器。
+
   - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求。
-  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行來自 Redis 佇列的耗時爬蟲任務。
+
+  - **Worker Service (`worker`)**: (v5.9 更新) 運行 Dramatiq Worker，專門執行爬蟲任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器，確保爬蟲成功率。
+
 - **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務。
+
 - **Aiven Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 所需的訊息代理。
 
 ```mermaid
@@ -38,7 +53,7 @@ graph TD
     subgraph "Fly.io 雲端平台"
         subgraph "Fly App: cpbl-takao-today-be"
             Web[Web Service / FastAPI]
-            Worker[Worker Service / Dramatiq]
+            Worker["Worker Service / Dramatiq<br/>(運行於 Xvfb 環境)"]
         end
         DB[(Fly PostgreSQL)]
     end
@@ -64,224 +79,130 @@ graph TD
 
 ## 技術棧 (Tech Stack)
 
-| 類別                   | 技術                                    |
-| ---------------------- | --------------------------------------- |
-| **後端框架**           | FastAPI, Uvicorn                        |
-| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic   |
-| **背景任務佇列**       | Dramatiq, Redis (Aiven)                 |
-| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests    |
-| **容器化**             | Docker, Docker Compose                  |
-| **雲端平台**           | Fly.io                                  |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff, Black |
-| **測試框架**           | pytest, pytest-mock, pytest-playwright  |
-| **設定管理**           | pydantic-settings                       |
-| **日誌**               | python-json-logger                      |
+| 類別 | 技術 |
+| --- | --- |
+| **後端框架** | FastAPI, Uvicorn |
+| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic |
+| **背景任務佇列** | Dramatiq, Redis (Aiven) |
+| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests |
+| **容器化** | Docker, Docker Compose |
+| **雲端平台** | Fly.io |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff |
+| **測試框架** | pytest, pytest-mock, pytest-playwright |
+| **設定管理** | pydantic-settings |
+| **日誌** | python-json-logger |
+| **虛擬顯示** | Xvfb (X virtual framebuffer) |
+| **依賴項安全** | pip-audit |
 
 ## 本地開發環境設定 (Local Development Setup)
 
 請遵循以下步驟在你的本地機器上設定並運行此專案。
 
-### 步驟一：克隆專案
+### 步驟一：取得專案程式碼
 
 ```bash
 git clone <YOUR_REPOSITORY_URL>
 cd <PROJECT_DIRECTORY>
 ```
 
-### 步驟二：建立環境變數檔案 (`.env`)
+### 步驟二：設定環境變數 (`.env`)
 
-在專案的根目錄下，手動建立一個名為 `.env` 的檔案。此檔案用於存放本地開發所需的敏感資訊與設定，且已被 `.gitignore` 排除，不會被提交至版本控制。
+本專案透過 `.env` 檔案管理本地開發環境的設定。請從範例檔案複製一份來開始：
 
-複製以下內容至你的 `.env` 檔案中，並修改 `API_KEY` 的值：
-
-```env
-# .env
-
-# 在容器環境中，主機名稱應為服務名稱 'db'
-# 但為了讓本地工具 (如 psql) 能連線，這裡仍可保留 localhost
-DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/mydb
-
-# 在容器環境中，主機名稱應為服務名稱 'redis'
-DRAMATIQ_BROKER_URL=redis://localhost:6379/0
-
-# 用於保護 API 端點的密鑰，請更換為一個你自己的安全字串
-API_KEY=your_secret_api_key_here
+```bash
+cp .env.example .env
 ```
+
+接著，請修改 `.env` 檔案的內容。以下是所有必要環境變數的說明：
+
+| 變數名稱 | 說明 | 格式範例 |
+| --- | --- | --- |
+| `DATABASE_URL` | **必要。** 本地開發資料庫的連線字串。 | `postgresql://myuser:mypassword@db:5432/mydb` |
+| `DRAMATIQ_BROKER_URL` | **必要。** 本地開發 Redis 的連線字串。 | `redis://redis:6379/0` |
+| `API_KEY` | **必要。** 用於保護 API 端點的密鑰。 | `your_secret_api_key_here` |
+| `TARGET_TEAMS` | **必要。** 爬蟲要鎖定的球隊名稱列表。 | `["味全龍","中信兄弟"]` |
+| `TARGET_PLAYERS` | **必要。** 爬蟲要鎖定的球員名稱列表。 | `["吉力吉撈．鞏冠","曾頌恩"]` |
+
+**重要**: `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式，以確保 Pydantic 在所有環境下都能正確解析。
 
 ### 步驟三：啟動並初始化服務
 
 本專案使用 Docker Compose 管理所有服務。
 
-```bash
-# 首次啟動或 Dockerfile/docker-compose.yml 變更後，使用 --build
-docker compose up -d --build
-```
+1. **啟動所有服務容器**:
 
-### 步驟四：初始化資料庫 (首次設定必要)
+   ```bash
+   # 首次啟動或 Dockerfile/docker-compose.yml 變更後，使用 --build
+   docker compose up -d --build
+   ```
 
-在首次啟動服務後，你需要使用 Alembic 在資料庫中建立所有必要的資料表。
+2. **初始化資料庫 (僅首次設定必要)**:
+   在新啟動的 `web` 容器中，使用 Alembic 建立所有必要的資料表。
 
-```bash
-# 在 web 容器中執行 alembic upgrade 指令
-docker compose run --rm web alembic upgrade head
-```
+   ```bash
+   # 在 web 容器中執行 alembic upgrade 指令
+   docker compose run --rm web alembic upgrade head
+   ```
 
-此指令會將資料庫結構更新到最新的版本。
+3. **首次初始化賽程**:
+   使用 `curl` 或任何 API 測試工具，向以下端點發送一個 POST 請求。這會觸發背景任務，抓取整年度的賽程。
 
-## 使用方式
-
-當所有服務都成功啟動，且資料庫也已初始化後，即可開始使用。
-
-### 首次初始化賽程
-
-使用 `curl` 或任何 API 測試工具，向以下端點發送一個 POST 請求。請記得將 `your_secret_api_key_here` 替換為你在 `.env` 檔案中設定的 `API_KEY`。
-
-```bash
-curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule) \
--H "X-API-Key: your_secret_api_key_here"
-```
-
-此請求會發送一個任務到背景佇列，Worker 接收到後便會開始爬取整年度的賽程。
-
-## 資料庫遷移 (Database Migrations)
-
-本專案使用 Alembic 來管理資料庫結構的變更。
-
-- **當你修改 `app/models.py` 中的模型後**，你需要產生一個新的遷移腳本：
-  ```bash
-  # 在 web 容器中自動產生遷移腳本
-  docker compose run --rm web alembic revision --autogenerate -m "描述你的變更"
-  ```
-- **將變更應用到資料庫**:
-  ```bash
-  # 在 web 容器中執行 upgrade
-  docker compose run --rm web alembic upgrade head
-  ```
+   ```bash
+   curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule) \
+   -H "X-API-Key: your_secret_api_key_here"
+   ```
 
 ## API 端點 (API Endpoints)
 
-### 1. 取得指定日期的比賽結果
+本專案採用 FastAPI 框架，它會自動生成互動式的 API 文件。這份文件是查詢所有可用端點、參數及請求範例最準確的來源。
 
-- **Endpoint**: `GET /api/games/{game_date}`
-- **說明**: 查詢並回傳指定日期的所有比賽基本資料。
-- **範例**:
-  ```bash
-  curl [http://127.0.0.1:8000/api/games/2025-07-16](http://127.0.0.1:8000/api/games/2025-07-16)
-  ```
+當本地開發環境啟動後，請直接在瀏覽器中開啟以下任一網址：
 
-### 2. 手動觸發賽程更新
+- **互動式 API 文件 (Swagger UI)**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
-- **Endpoint**: `POST /api/update_schedule`
-- **說明**: 觸發一個背景任務來爬取本賽季的完整賽程。主要用於首次初始化或賽程有重大變動時。
-- **Headers**:
-  - `X-API-Key`: 你的 API 金鑰
-- **範例**:
-  ```bash
-  curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule) \
-  -H "X-API-Key: your_secret_api_key_here"
-  ```
+- **另一種 API 文件格式 (ReDoc)**: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
 
-### 3. 手動觸發數據爬蟲
+在 `/docs` 頁面中，你可以直接在線上測試每一個 API 端點，並查看其請求與回應的詳細結構。
 
-- **Endpoint**: `POST /api/run_scraper`
-- **說明**: 用於手動補跑或測試特定時間範圍的數據爬取。
-- **Headers**:
-  - `X-API-Key`: 你的 API 金鑰
-  - `Content-Type`: `application/json`
-- **Body (JSON)**:
-  - `mode` (str, 必要): `daily`, `monthly`, 或 `yearly`。
-  - `date` (str, 可選): 指定日期/月份/年份。格式分別為 `"YYYY-MM-DD"`, `"YYYY-MM"`, `"YYYY"`。
-- **範例**:
+## 常用工具與腳本
 
-  - **補跑昨天的數據**:
+### 批次匯入歷史數據 (`bulk_import.py`)
 
-    ```bash
-    curl -X POST [http://127.0.0.1:8000/api/run_scraper](http://127.0.0.1:8000/api/run_scraper) \
-    -H "X-API-Key: your_secret_api_key_here" \
-    -H "Content-Type: application/json" \
-    -d '{"mode": "daily", "date": "2025-07-15"}'
-    ```
+(v5.9 更新) 此工具已被完全容器化，用於批次抓取指定日期範圍的歷史比賽數據。**請勿在本地主機直接執行此腳本。**
 
-  - **補跑整個六月的數據**:
-    ```bash
-    curl -X POST [http://127.0.0.1:8000/api/run_scraper](http://127.0.0.1:8000/api/run_scraper) \
-    -H "X-API-Key: your_secret_api_key_here" \
-    -H "Content-Type: application/json" \
-    -d '{"mode": "monthly", "date": "2025-06"}'
-    ```
-
-### 4.批次匯入歷史數據 (bulk_import.py)
-
-`bulk_import.py` 是一個獨立的命令列工具，用於批次抓取指定日期範圍的歷史比賽數據。為了確保操作的穩定性與可控性，整個流程被拆分為兩個可獨立執行的步驟。
-
----
-
-#### 執行環境
-
-此腳本應在專案的根目錄下，於已啟動本地 Python 虛擬環境的終端機中執行。它會分別讀取 `.env`（本地資料庫）和 `.env.prod`（雲端資料庫）檔案來取得連線設定。
-
----
-
-#### 步驟一：爬取資料至本地資料庫
-
-此步驟會將指定日期範圍的比賽數據，完整地爬取並儲存到你本地的 PostgreSQL 開發資料庫中。
-
-##### 指令格式:
+**指令格式:**
 
 ```bash
-python bulk_import.py scrape --start YYYY-MM-DD [--end YYYY-MM-DD]
+docker compose run --rm web python bulk_import.py [OPTIONS]
 ```
 
-- `--start` (必要): 爬取的起始日期，格式為 `YYYY-MM-DD`。
-- `--end` (可選): 爬取的結束日期，格式為 `YYYY-MM-DD`。如果省略，預設為執行指令的當天日期。
+**Options:**
 
-##### 範例:
+- `--start YYYY-MM-DD`: **必要**, 爬取的起始日期。
+
+- `--end YYYY-MM-DD`: 可選, 爬取的結束日期 (預設為當天)。
+
+**範例:** 爬取 2024 年 4 月 1 日至 10 日的數據
 
 ```bash
-# 爬取 2024 年 4 月 1 日至 2024 年 4 月 10 日的數據
-python bulk_import.py scrape --start 2024-04-01 --end 2024-04-10
+docker compose run --rm web python bulk_import.py --start 2024-04-01 --end 2024-04-10
 ```
 
-此過程會逐日爬取，並在每次請求間有 5 秒的延遲，以避免對目標網站造成過大負擔。若中途發生錯誤，腳本會記錄錯誤並繼續執行下一天。
-
----
-
-#### 步驟二：從本地上傳資料至雲端
-
-在確認本地資料庫的數據完整無誤後，執行此步驟，將本地資料庫中的所有內容同步至雲端生產資料庫。
-
-##### 指令格式:
-
-```bash
-python bulk_import.py upload
-```
-
-此指令會：
-
-- 連線至 `.env` 指定的本地資料庫（來源）與 `.env.prod` 指定的雲端資料庫（目標）。
-- 逐一比對資料表，使用 SQLAlchemy 的 `merge` 方法來同步資料。`merge` 會根據主鍵判斷：
-  - 如果雲端資料庫中不存在該筆紀錄，則新增。
-  - 如果已存在，則更新。
-
-整個過程是一個完整的資料庫交易，若中途發生任何錯誤，所有變更都會被復原 (rollback)。
-
-##### 範例:
-
-```bash
-# 將本地資料庫的所有內容同步至雲端
-python bulk_import.py upload
-```
+此指令會在 `web` 容器中執行腳本，並將結果存入由 `DATABASE_URL` 指定的資料庫。
 
 ## 資料庫遷移 (Database Migrations)
 
 本專案使用 Alembic 來管理資料庫結構的變更。
 
 - **當你修改 `app/models.py` 中的模型後**，你需要產生一個新的遷移腳本：
+
   ```bash
   # 在 web 容器中自動產生遷移腳本
   docker compose run --rm web alembic revision --autogenerate -m "描述你的變更"
   ```
+
 - **將變更應用到資料庫**:
+
   ```bash
   # 在 web 容器中執行 upgrade
   docker compose run --rm web alembic upgrade head
@@ -289,29 +210,67 @@ python bulk_import.py upload
 
 ## 程式碼品質與 CI/CD
 
-- **pre-commit**: 本專案使用 `pre-commit` 在每次 `git commit` 時自動執行 Ruff (linter + formatter) 和 Black (formatter)，以確保所有提交的程式碼都符合一致的風格與品質標準。初次設定請運行 `pre-commit install`。
-- **GitHub Actions**: 每次推送到 GitHub 時，會觸發 CI 工作流程。此流程會在一個包含 PostgreSQL 和 Redis 服務的乾淨環境中，依序執行程式碼風格檢查、格式化檢查與完整的 `pytest` 測試套件。
+- **pre-commit**: 本專案使用 `pre-commit` 在每次 `git commit` 時自動執行 Ruff (linter + formatter)，以確保所有提交的程式碼都符合一致的風格與品質標準。初次設定請運行 `pre-commit install`。
+
+- **GitHub Actions**: 每次推送到 `main` 分支時，會觸發 CI/CD 工作流程，包含：
+
+  1. 程式碼品質與格式檢查。
+
+  2. 執行完整的 `pytest` 測試套件（排除 e2e 與 canary 測試）。
+
+  3. 若測試通過，自動部署應用至 Fly.io。
+
+### 執行特定測試
+
+本專案使用 Pytest Marker 來分類測試 (`e2e`, `canary`)。你可以使用 `-m` 參數來篩選要執行或跳過的測試。
+
+- **僅執行單元測試 (CI 的主要流程)**:
+
+  ```bash
+  pytest -m "not e2e and not canary"
+  ```
+
+- **僅執行 e2e 測試**:
+
+  ```bash
+  pytest -m e2e
+  ```
+
+- **僅執行金絲雀測試**:
+
+  ```bash
+  pytest -m canary
+  ```
 
 ## 部署 (Deployment)
 
-本專案透過 `flyctl` CLI 工具部署至 Fly.io。
+### 主要路徑：自動化部署
 
-1.  **設定秘密 (Secrets)**:
-    在部署前，必須將生產環境所需的敏感資訊安全地設定為 Fly.io 的 secrets。這些資訊絕不應存放在版本控制中。
+本專案已設定 CI/CD，任何推送到 `main` 分支且通過所有測試的提交，都會被自動部署到 Fly.io。這是標準的部署流程。
 
-    ```bash
-    fly secrets set \
-      DATABASE_URL="<YOUR_FLY_POSTGRES_URL>" \
-      DRAMATIQ_BROKER_URL="<YOUR_AIVEN_REDIS_URL>" \
-      API_KEY="<YOUR_PRODUCTION_API_KEY>"
-    ```
+### 備用路徑：手動部署 (用於緊急修復或特殊情況)
 
-2.  **部署應用**:
-    設定完 secrets 後，在專案根目錄執行以下指令即可觸發部署。
-    ```bash
-    fly deploy
-    ```
-    `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
+在 CI/CD 流程無法使用或需要緊急部署時，可以透過 `flyctl` CLI 工具手動部署。
+
+1. **設定秘密 (Secrets)**:
+   在首次部署或 Secret 變更時，你仍需手動設定生產環境的敏感資訊。這些資訊**絕不**應存放在版本控制中。
+
+   ```bash
+   fly secrets set \
+     DATABASE_URL="<YOUR_FLY_POSTGRES_URL>" \
+     DRAMATIQ_BROKER_URL="<YOUR_AIVEN_REDIS_URL>" \
+     API_KEY="<YOUR_PRODUCTION_API_KEY>" \
+     TARGET_TEAMS='["味全龍","中信兄弟"]' \
+     TARGET_PLAYERS='["吉力吉撈．鞏冠","曾頌恩"]'
+   ```
+
+2. **部署應用**:
+   設定完 secrets 後，在專案根目錄執行以下指令即可觸發部署。
+
+   ```bash
+   fly deploy
+   ```
+   `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
 
 ## 本地日誌查看技巧 (Local Log Viewing)
 
