@@ -21,21 +21,35 @@ class Settings(BaseSettings):
     API_KEY: str
 
     # [新增] 批次匯入腳本專用設定
-    # 將它們設為 Optional，這樣在主程式運行時若 .env 中沒有這些變數，也不會引發驗證錯誤
     STAGING_DATABASE_URL: Optional[str] = None
     PRODUCTION_DATABASE_URL: Optional[str] = None
     BULK_IMPORT_DELAY_SECONDS: Optional[int] = 5
 
-    # 其他應用程式設定
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://12-7.0.0.1:3000"]
-    TARGET_TEAM_NAME: str = "台鋼雄鷹"
-    TARGET_TEAMS: List[str] = ["台鋼雄鷹"]
-    TARGET_PLAYER_NAMES: List[str] = ["王柏融", "魔鷹", "吳念庭"]
+    # [修改] 將爬蟲目標設定的預設值移除，改為由環境變數強制定義
+    TARGET_TEAM_NAME: str
+    TARGET_TEAMS: List[str]
+    TARGET_PLAYER_NAMES: List[str]
+
+    # [新增] 將 tasks 和 scraper 的硬式編碼參數移至此處
+    # Dramatiq 任務設定
+    DRAMATIQ_MAX_RETRIES: int = 2
+    DRAMATIQ_RETRY_BACKOFF: int = 300000  # in milliseconds
+
+    # Playwright 操作設定
+    PLAYWRIGHT_SLOW_MO: int = 300
+    PLAYWRIGHT_TIMEOUT: int = 60000
+    PLAYWRIGHT_STATIC_DELAY: int = 250
+
+    # CPBL 賽季設定
+    CPBL_SEASON_START_MONTH: int = 3
+    CPBL_SEASON_END_MONTH: int = 11
+
+    # 其他應用程式設定 (保留預設值)
+    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     BASE_URL: str = "https://www.cpbl.com.tw"
     SCHEDULE_URL: str = f"{BASE_URL}/schedule"
     TEAM_SCORE_URL: str = f"{BASE_URL}/team/teamscore"
     DEFAULT_REQUEST_TIMEOUT: int = 30
-    PLAYWRIGHT_TIMEOUT: int = 60000
     FRIENDLY_SCRAPING_DELAY: int = 2
 
     # 【修改】「連線」功能定義，改為引用常數模組，並將 set 轉為 list

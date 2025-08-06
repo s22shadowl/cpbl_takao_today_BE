@@ -118,7 +118,8 @@ def _process_filtered_games(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            slow_mo=300,
+            # [修改] 將延遲參數改為從 settings 讀取
+            slow_mo=settings.PLAYWRIGHT_SLOW_MO,
             handle_sigint=False,
             handle_sigterm=False,
             handle_sighup=False,
@@ -143,7 +144,9 @@ def _process_filtered_games(
 
                 page.goto(box_score_url, timeout=settings.PLAYWRIGHT_TIMEOUT)
                 page.wait_for_selector(
-                    "div.GameBoxDetail", state="visible", timeout=30000
+                    "div.GameBoxDetail",
+                    state="visible",
+                    timeout=settings.PLAYWRIGHT_TIMEOUT,
                 )
                 all_players_data = box_score.parse_box_score_page(
                     page.content(), target_teams=target_teams
@@ -155,7 +158,9 @@ def _process_filtered_games(
                 page.goto(
                     live_url, wait_until="load", timeout=settings.PLAYWRIGHT_TIMEOUT
                 )
-                page.wait_for_selector("div.InningPlaysGroup", timeout=15000)
+                page.wait_for_selector(
+                    "div.InningPlaysGroup", timeout=settings.PLAYWRIGHT_TIMEOUT
+                )
 
                 full_game_events = []
                 inning_buttons = page.locator(
@@ -167,7 +172,8 @@ def _process_filtered_games(
                     logger.info(f"處理第 {inning_num} 局...")
                     inning_li.click()
                     expect(inning_li).to_have_class(re.compile(r"active"))
-                    page.wait_for_timeout(250)
+                    # [修改] 將靜態延遲改為從 settings 讀取
+                    page.wait_for_timeout(settings.PLAYWRIGHT_STATIC_DELAY)
                     active_inning_content = page.locator(
                         "div.InningPlaysGroup div.tab_cont.active"
                     )
@@ -185,7 +191,10 @@ def _process_filtered_games(
                             )
                             for button in expand_buttons:
                                 try:
-                                    if button.is_visible(timeout=500):
+                                    # [修改] 將可見性檢查的超時改為從 settings 讀取
+                                    if button.is_visible(
+                                        timeout=500
+                                    ):  # 暫時保留，此 timeout 較為特殊
                                         button.click(timeout=500)
                                 except Exception:
                                     pass
@@ -359,8 +368,11 @@ def scrape_entire_year(year_str=None):
         logger.warning(f"目標年份 {year_to_scrape} 是未來年份，任務中止。")
         return
 
-    end_month = today.month if year_to_scrape == today.year else 11
-    start_month = 3
+    # [修改] 將硬式編碼的月份改為從 settings 讀取
+    end_month = (
+        today.month if year_to_scrape == today.year else settings.CPBL_SEASON_END_MONTH
+    )
+    start_month = settings.CPBL_SEASON_START_MONTH
 
     for month in range(start_month, end_month + 1):
         try:

@@ -44,10 +44,10 @@ def should_retry_scraper_task(retries_so_far: int, exception: Exception) -> bool
 # --- 任務定義 (Actors) ---
 
 
-# 核心修正：為賽程更新任務加上重試機制
+# [修改] 將重試參數改為從 settings 讀取
 @dramatiq.actor(
-    max_retries=2,
-    min_backoff=300000,  # 300 秒
+    max_retries=settings.DRAMATIQ_MAX_RETRIES,
+    min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
 )
 def task_update_schedule_and_reschedule():
@@ -59,7 +59,13 @@ def task_update_schedule_and_reschedule():
 
     logger.info("--- Dramatiq Worker: 已接收到賽程更新任務，開始執行 ---")
     try:
-        schedule_scraper.scrape_cpbl_schedule(2025, 3, 10, include_past_games=True)
+        # [修改] 將月份的硬式編碼改為從 settings 讀取
+        schedule_scraper.scrape_cpbl_schedule(
+            2025,
+            settings.CPBL_SEASON_START_MONTH,
+            settings.CPBL_SEASON_END_MONTH,
+            include_past_games=True,
+        )
         setup_scheduler()
         logger.info("--- Dramatiq Worker: 賽程更新任務執行完畢 ---")
     except FatalScraperError as e:
@@ -69,10 +75,10 @@ def task_update_schedule_and_reschedule():
         )
 
 
-# 核心修正：為單日爬蟲任務加上重試機制
+# [修改] 將重試參數改為從 settings 讀取
 @dramatiq.actor(
-    max_retries=2,
-    min_backoff=300000,  # 30 秒
+    max_retries=settings.DRAMATIQ_MAX_RETRIES,
+    min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
 )
 def task_scrape_single_day(
@@ -93,10 +99,10 @@ def task_scrape_single_day(
         )
 
 
-# 核心修正：為逐月爬蟲任務加上重試機制
+# [修改] 將重試參數改為從 settings 讀取
 @dramatiq.actor(
-    max_retries=2,
-    min_backoff=300000,  # 300 秒
+    max_retries=settings.DRAMATIQ_MAX_RETRIES,
+    min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
 )
 def task_scrape_entire_month(month_str: Optional[str] = None):
