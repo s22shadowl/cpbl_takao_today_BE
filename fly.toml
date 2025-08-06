@@ -3,12 +3,19 @@
 app = 'cpbl-takao-today-be'
 primary_region = 'sin'
 
+# [新增] 為所有 process 設定優雅關閉參數
+# 當收到停止指令時，發送 SIGINT 信號
+kill_signal = "SIGINT"
+# 給予 10 分鐘 (600 秒) 的寬限時間，等待 process 處理完畢
+kill_timeout = "600s"
+
 [build]
   dockerfile = "Dockerfile"
 
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
-  worker = "dramatiq app.tasks"
+  # [修改] 為 dramatiq 指令加上內部超時，設定為 570 秒 (9.5 分鐘)，略小於平台的 kill_timeout
+  worker = "dramatiq app.tasks --shutdown-timeout 570000"
 
 [[services]]
   processes = ["web"]
@@ -34,11 +41,11 @@ primary_region = 'sin'
   min_machines_running = 1
 
   [[services.checks]]
-  type = "tcp"
-  port = 8080
-  interval = "15s"
-  timeout = "2s"
-  grace_period = "30s"
+ type = "tcp"
+ port = 8080
+ interval = "15s"
+ timeout = "2s"
+ grace_period = "30s"
 
   # 設定 HTTP 健康檢查
   [[services.http_checks]]

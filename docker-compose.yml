@@ -34,8 +34,8 @@ services:
 
   worker:
     build: .
-    # **最終修正**: 使用我們已驗證成功的、包含 PYTHONPATH 的啟動指令
-    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.tasks:redis_broker app.tasks"
+    # [修改] 為 dramatiq 指令加上內部超時，與 fly.toml 保持一致
+    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.tasks:redis_broker app.tasks --shutdown-timeout 570000"
     volumes:
       - .:/code
     environment:
