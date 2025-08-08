@@ -128,3 +128,33 @@ jobs:
           cat web.log || echo "web.log not found"
           echo "\n--- Worker Logs ---"
           cat worker.log || echo "worker.log not found"
+
+  deploy:
+    name: Deploy to Fly.io
+    runs-on: ubuntu-latest
+    needs: build-and-test # 確保在 build-and-test 成功後才執行
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # 僅在推送至 main 分支時執行
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Fly.io CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Set Fly.io Secrets Dynamically
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # 將所有 GitHub Secrets 作為一個 JSON 字串傳入此步驟
+          SECRETS_JSON: ${{ toJSON(secrets) }}
+        run: |
+          # 使用 jq 工具解析 JSON，篩選出所有以 'PROD_' 開頭的 secrets，
+          # 移除前綴 'PROD_'，並將其格式化為 'KEY=VALUE' 的形式，
+          # 最後透過 xargs 將它們一次性傳遞給 fly secrets set 指令。
+          echo "$SECRETS_JSON" | jq -r 'to_entries[] | select(.key | startswith("PROD_")) | "\(.key | ltrimstr("PROD_"))=\(.value)"' | \
+          xargs fly secrets set --app cpbl-takao-today-be
+
+      - name: Deploy to Fly.io
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: fly deploy --app cpbl-takao-today-be
