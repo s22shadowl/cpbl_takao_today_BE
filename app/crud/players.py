@@ -104,6 +104,7 @@ def store_player_game_data(
 
             for detail_dict in at_bats_details_list:
                 detail_dict["player_game_summary_id"] = player_game_summary_id
+                detail_dict["game_id"] = game_id
 
                 filtered_detail = {
                     k: v for k, v in detail_dict.items() if k in detail_cols
