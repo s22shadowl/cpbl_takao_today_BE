@@ -53,7 +53,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Install tools for CI, including the new audit tool
           pip install ruff pytest requests pip-audit
 
       - name: Install Playwright Browsers
@@ -62,7 +61,6 @@ jobs:
 
       - name: Scan for vulnerabilities
         run: |
-          # Scan dependencies listed in requirements.txt for known vulnerabilities
           pip-audit -r requirements.txt
 
       - name: Lint and Format Check
@@ -78,7 +76,6 @@ jobs:
           TARGET_TEAMS: '["台鋼雄鷹"]'
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: |
-          # 執行除了 e2e 目錄以外的所有測試
           pytest -m "not e2e and not canary"
 
       - name: Run E2E Tests
@@ -87,16 +84,13 @@ jobs:
           DRAMATIQ_BROKER_URL: redis://localhost:6379/0
           API_KEY: test-ci-key
           PORT: 8000
-          # 僅在此步驟啟用 E2E 測試模式
           E2E_TEST_MODE: "true"
           TARGET_TEAM_NAME: "台鋼雄鷹"
           TARGET_TEAMS: '["台鋼雄鷹"]'
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: |
-          # 啟動 Web 服務
           echo "Starting Web server..."
           uvicorn app.main:app --host 0.0.0.0 --port $PORT > web.log 2>&1 &
-          # 等待 Web 服務就緒
           python - <<'EOF'
           import os, time, requests
           port = os.getenv("PORT", "8000")
@@ -112,13 +106,11 @@ jobs:
           print("Web Server did not start in time."); exit(1)
           EOF
 
-          # 【修改】使用 xvfb-run 啟動 Worker 服務
           echo "Starting Worker service with xvfb..."
           xvfb-run dramatiq app.tasks:redis_broker app.tasks --processes 2 > worker.log 2>&1 &
           sleep 5
           echo "Worker service started."
 
-          # 僅執行 e2e 目錄下的測試
           pytest tests/e2e
 
       - name: Display logs on failure
@@ -145,16 +137,19 @@ jobs:
       - name: Set Fly.io Secrets Dynamically
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-          # 將所有 GitHub Secrets 作為一個 JSON 字串傳入此步驟
           SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
-          # 使用 jq 工具解析 JSON，篩選出所有以 'PROD_' 開頭的 secrets，
-          # 移除前綴 'PROD_'，並將其格式化為 'KEY=VALUE' 的形式，
-          # 最後透過 xargs 將它們一次性傳遞給 fly secrets set 指令。
-          echo "$SECRETS_JSON" | jq -r 'to_entries[] | select(.key | startswith("PROD_")) | "\(.key | ltrimstr("PROD_"))=\(.value)"' | \
-          xargs fly secrets set --app cpbl-takao-today-be
+          SECRETS_TO_SET=$(echo "$SECRETS_JSON" | jq -r 'to_entries[] | select(.key | startswith("PROD_")) | "\(.key | ltrimstr("PROD_"))=\(.value)"')
+
+          if [[ -n "$SECRETS_TO_SET" ]]; then
+            echo "Staging secrets on Fly.io..."
+            # 【修改】加入 --stage 旗標，讓 secrets 在下次部署時才生效，避免立即重啟
+            echo "$SECRETS_TO_SET" | xargs flyctl secrets set --stage --app cpbl-takao-today-be
+          else
+            echo "No secrets with PROD_ prefix found to set."
+          fi
 
       - name: Deploy to Fly.io
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        run: fly deploy --app cpbl-takao-today-be
+        run: flyctl deploy --app cpbl-takao-today-be

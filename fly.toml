@@ -61,3 +61,9 @@ kill_timeout = "300s"
     protocol = "http"
     # 失敗後關閉機器
     restart_limit = 0
+
+[env]
+  # 將非敏感設定移至此處
+  # 注意：JSON 陣列字串中的雙引號需要用反斜線進行轉義
+  TARGET_TEAMS = "[\"台鋼雄鷹\"]"
+  TARGET_PLAYERS = "[\"吳念庭\",\"魔鷹\",\"王柏融\"]"
