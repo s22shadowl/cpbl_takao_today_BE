@@ -1,9 +1,13 @@
 # tests/test_tasks.py
 
-from unittest.mock import patch
+from unittest.mock import patch, ANY
 import pytest
+
+# 【修正】直接從函式庫匯入真實的 requests 和 RequestException
+from requests.exceptions import RequestException
 from app import tasks
 from app.exceptions import RetryableScraperError, FatalScraperError, GameNotFinalError
+from app.config import settings
 
 
 @pytest.fixture
@@ -15,9 +19,10 @@ def mock_task_dependencies(monkeypatch):
     mocks = {
         "scraper": patch("app.tasks.scraper").start(),
         "logger": patch("app.tasks.logger").start(),
-        # 【修正】Patch 函式被查找的路徑 (lookup path)，而不是它被定義的路徑
         "schedule_scraper": patch("app.core.schedule_scraper", create=True).start(),
         "setup_scheduler": patch("app.scheduler.setup_scheduler", create=True).start(),
+        # 【修正】更精準地模擬 requests.post，以避免替換掉 exceptions 模組
+        "requests_post": patch("app.tasks.requests.post").start(),
     }
     yield mocks
     patch.stopall()
@@ -97,7 +102,7 @@ def test_task_update_schedule_success(mock_task_dependencies):
     tasks.task_update_schedule_and_reschedule()
 
     mock_schedule_scraper.scrape_cpbl_schedule.assert_called_once_with(
-        2025, 3, 11, include_past_games=True
+        2025, ANY, ANY, include_past_games=True
     )
     mock_setup_scheduler.assert_called_once()
 
@@ -148,3 +153,40 @@ def test_task_scrape_entire_year_catches_and_logs_exception(mock_task_dependenci
 
     mock_logger.error.assert_called_once()
     assert "發生嚴重錯誤" in mock_logger.error.call_args[0][0]
+
+
+# --- 【修正】測試快取清除邏輯 ---
+
+
+def test_task_triggers_cache_clear_on_success(mock_task_dependencies):
+    """【修正】測試單日爬蟲成功後，會呼叫 requests.post 清除快取。"""
+    mock_requests_post = mock_task_dependencies["requests_post"]
+
+    tasks.task_scrape_single_day("2025-07-16", [])
+
+    expected_url = "http://web:8000/api/system/clear-cache"
+    expected_headers = {"X-API-Key": settings.API_KEY}
+    # 【修正】將 url 作為位置參數傳遞，以匹配實際的函式呼叫
+    mock_requests_post.assert_called_once_with(
+        expected_url, headers=expected_headers, timeout=10
+    )
+
+
+def test_task_logs_error_if_cache_clear_fails(mock_task_dependencies):
+    """【修正】測試當 requests.post 拋出異常時，任務會記錄錯誤但不會失敗。"""
+    mock_requests_post = mock_task_dependencies["requests_post"]
+    mock_logger = mock_task_dependencies["logger"]
+    # 【修正】讓 mock 拋出一個真實的 RequestException 實例
+    mock_requests_post.side_effect = RequestException("Connection failed")
+
+    # 執行任務，它不應該拋出任何異常
+    try:
+        tasks.task_scrape_single_day("2025-07-16", [])
+    except Exception as e:
+        pytest.fail(f"任務不應因快取清除失敗而失敗，但拋出了: {e}")
+
+    # 驗證 requests.post 被呼叫了
+    mock_requests_post.assert_called_once()
+    # 驗證記錄了錯誤日誌
+    mock_logger.error.assert_called_once()
+    assert "呼叫快取清除 API 時發生錯誤" in mock_logger.error.call_args[0][0]

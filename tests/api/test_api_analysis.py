@@ -6,6 +6,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from app import models
+from app.config import settings  # 匯入 settings 以取得 API_KEY
 
 # --- 測試資料設定 Fixture ---
 
@@ -42,18 +43,21 @@ def setup_streak_test_data(db_session: Session):
         [
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["A"].id,
+                game_id=game.id,
                 inning=1,
                 sequence_in_game=1,
                 result_short="一安",
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["B"].id,
+                game_id=game.id,
                 inning=1,
                 sequence_in_game=2,
                 result_short="四壞",
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["C"].id,
+                game_id=game.id,
                 inning=1,
                 sequence_in_game=3,
                 result_short="二安",
@@ -61,6 +65,7 @@ def setup_streak_test_data(db_session: Session):
             # 中斷點
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["D"].id,
+                game_id=game.id,
                 inning=1,
                 sequence_in_game=4,
                 result_short="三振",
@@ -68,12 +73,14 @@ def setup_streak_test_data(db_session: Session):
             # 半局二：球員E, F 連續安打
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["E"].id,
+                game_id=game.id,
                 inning=2,
                 sequence_in_game=5,
                 result_short="全打",
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["F"].id,
+                game_id=game.id,
                 inning=2,
                 sequence_in_game=6,
                 result_short="一安",
@@ -115,39 +122,50 @@ def setup_ibb_impact_test_data(db_session: Session):
             # 第 1 局: IBB 後續得 3 分
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["A"].id,
+                game_id=game.id,
                 inning=1,
                 result_short="一安",
                 runs_scored_on_play=0,
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["B"].id,
+                game_id=game.id,
                 inning=1,
                 result_description_full="故意四壞",
                 runs_scored_on_play=0,
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["C"].id,
+                game_id=game.id,
                 inning=1,
                 result_short="二安",
                 runs_scored_on_play=1,
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["D"].id,
+                game_id=game.id,
                 inning=1,
                 result_short="全打",
                 runs_scored_on_play=2,
             ),
             # 第 2 局: IBB 後續得 0 分
             models.AtBatDetailDB(
-                player_game_summary_id=summaries["A"].id, inning=2, result_short="滾地"
+                player_game_summary_id=summaries["A"].id,
+                game_id=game.id,
+                inning=2,
+                result_short="滾地",
             ),
             models.AtBatDetailDB(
                 player_game_summary_id=summaries["B"].id,
+                game_id=game.id,
                 inning=2,
                 result_description_full="故意四壞",
             ),
             models.AtBatDetailDB(
-                player_game_summary_id=summaries["C"].id, inning=2, result_short="三振"
+                player_game_summary_id=summaries["C"].id,
+                game_id=game.id,
+                inning=2,
+                result_short="三振",
             ),
         ]
     )
@@ -227,10 +245,11 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
     db_session.flush()
 
     hr1 = models.AtBatDetailDB(
-        player_game_summary_id=s1.id, result_description_full="全壘打"
+        player_game_summary_id=s1.id, game_id=g1.id, result_description_full="全壘打"
     )
     hr2 = models.AtBatDetailDB(
         player_game_summary_id=s2.id,
+        game_id=g2.id,
         result_description_full="關鍵全壘打",
         opposing_pitcher_name="投手B",
     )
@@ -266,16 +285,19 @@ def test_get_situational_at_bats(client: TestClient, db_session: Session):
     db_session.flush()
     ab1 = models.AtBatDetailDB(
         player_game_summary_id=summary.id,
+        game_id=game.id,
         runners_on_base_before="壘上無人",
         result_short="滾地",
     )
     ab2 = models.AtBatDetailDB(
         player_game_summary_id=summary.id,
+        game_id=game.id,
         runners_on_base_before="一壘、二壘、三壘有人",
         result_short="滿貫砲",
     )
     ab3 = models.AtBatDetailDB(
         player_game_summary_id=summary.id,
+        game_id=game.id,
         runners_on_base_before="二壘有人",
         result_short="安打",
     )
@@ -355,19 +377,25 @@ def test_get_next_at_bats_after_ibb(client: TestClient, db_session: Session):
     db_session.flush()
 
     ab1 = models.AtBatDetailDB(
-        player_game_summary_id=s_A.id, inning=1, result_short="一安"
+        player_game_summary_id=s_A.id, game_id=game.id, inning=1, result_short="一安"
     )
     ab2_ibb = models.AtBatDetailDB(
-        player_game_summary_id=s_B.id, inning=1, result_description_full="故意四壞"
+        player_game_summary_id=s_B.id,
+        game_id=game.id,
+        inning=1,
+        result_description_full="故意四壞",
     )
     ab3_next = models.AtBatDetailDB(
-        player_game_summary_id=s_C.id, inning=1, result_short="三振"
+        player_game_summary_id=s_C.id, game_id=game.id, inning=1, result_short="三振"
     )
     ab4_new_inning = models.AtBatDetailDB(
-        player_game_summary_id=s_A.id, inning=2, result_short="二安"
+        player_game_summary_id=s_A.id, game_id=game.id, inning=2, result_short="二安"
     )
     ab5_last_ibb = models.AtBatDetailDB(
-        player_game_summary_id=s_B.id, inning=2, result_description_full="故意四壞"
+        player_game_summary_id=s_B.id,
+        game_id=game.id,
+        inning=2,
+        result_description_full="故意四壞",
     )
 
     db_session.add_all([ab1, ab2_ibb, ab3_next, ab4_new_inning, ab5_last_ibb])
@@ -427,6 +455,15 @@ def test_get_streaks_by_player_names(client: TestClient, setup_streak_test_data)
     assert streak["at_bats"][0]["player_name"] == "球員A"
     assert streak["at_bats"][1]["player_name"] == "球員B"
     assert streak["at_bats"][2]["player_name"] == "球員C"
+
+    # --- FIX START ---
+    # 清除快取以確保下一個斷言的獨立性
+    # 必須提供 X-API-Key header 來通過端點的相依性檢查
+    headers = {"X-API-Key": settings.API_KEY}
+    clear_response = client.post("/api/system/clear-cache", headers=headers)
+    # 端點成功時回傳包含 message 的 JSON，狀態碼為 200
+    assert clear_response.status_code == 200
+    # --- FIX END ---
 
     # 查詢一個不存在的連線
     response = client.get("/api/analysis/streaks?player_names=球員A&player_names=球員C")

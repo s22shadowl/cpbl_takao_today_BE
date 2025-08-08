@@ -1,13 +1,14 @@
 # app/api/analysis.py
 
 from app.crud import analysis
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.db import get_db
+from app.cache import cache  # 匯入快取裝飾器
 
 
 router = APIRouter(
@@ -19,7 +20,9 @@ router = APIRouter(
 
 
 @router.get("/games-with-players", response_model=List[schemas.GameResult])
+@cache()
 def get_games_with_players(
+    request: Request,
     players: List[str] = Query(..., description="球員姓名列表"),
     db: Session = Depends(get_db),
 ):
@@ -32,7 +35,8 @@ def get_games_with_players(
     "/players/{player_name}/last-homerun",
     response_model=schemas.LastHomerunStats,
 )
-def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
+@cache()
+def get_last_homerun(request: Request, player_name: str, db: Session = Depends(get_db)):
     """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
     stats = analysis.get_stats_since_last_homerun(db, player_name)
     if not stats:
@@ -46,8 +50,12 @@ def get_last_homerun(player_name: str, db: Session = Depends(get_db)):
     "/players/{player_name}/situational-at-bats",
     response_model=List[schemas.AtBatDetail],
 )
+@cache()
 def get_situational_at_bats(
-    player_name: str, situation: models.RunnersSituation, db: Session = Depends(get_db)
+    request: Request,
+    player_name: str,
+    situation: models.RunnersSituation,
+    db: Session = Depends(get_db),
 ):
     """根據指定的壘上情境，查詢球員的打席紀錄。"""
     at_bats = analysis.find_at_bats_in_situation(db, player_name, situation)
@@ -55,7 +63,10 @@ def get_situational_at_bats(
 
 
 @router.get("/positions/{position}", response_model=List[schemas.PlayerGameSummary])
-def get_position_records(position: str, db: Session = Depends(get_db)):
+@cache()
+def get_position_records(
+    request: Request, position: str, db: Session = Depends(get_db)
+):
     """查詢指定守備位置的所有球員出賽紀錄。"""
     summaries = analysis.get_summaries_by_position(db, position)
     return summaries
@@ -77,7 +88,9 @@ def get_next_at_bats_after_ibb(player_name: str, db: Session = Depends(get_db)):
     tags=["Analysis"],
     summary="查詢「連線」紀錄",
 )
+@cache()
 def get_on_base_streaks(
+    request: Request,
     db: Session = Depends(get_db),
     definition_name: str = Query("consecutive_on_base", description="要使用的連線定義"),
     min_length: int = Query(2, description="連線的最短長度", ge=2),
@@ -116,7 +129,10 @@ def get_on_base_streaks(
     tags=["Analysis"],
     summary="【新增】分析故意四壞的失分影響",
 )
-def get_ibb_impact_analysis(player_name: str, db: Session = Depends(get_db)):
+@cache()
+def get_ibb_impact_analysis(
+    request: Request, player_name: str, db: Session = Depends(get_db)
+):
     """
     查詢指定球員被故意四壞後，該半局後續所有打席的紀錄與總失分。
     """
