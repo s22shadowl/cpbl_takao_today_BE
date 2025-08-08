@@ -35,4 +35,11 @@ jobs:
         run: playwright install chromium --with-deps
 
       - name: 執行 Pytest (僅限 canary 標記)
+        env:
+          DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
+          DRAMATIQ_BROKER_URL: redis://localhost:6379/0
+          API_KEY: test-ci-key
+          TARGET_TEAM_NAME: "台鋼雄鷹"
+          TARGET_TEAMS: '["台鋼雄鷹"]'
+          TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
         run: pytest -m canary
