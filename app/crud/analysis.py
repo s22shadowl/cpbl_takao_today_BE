@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy import func, or_, select
 from app.config import settings
-from sqlalchemy.dialects import postgresql
 
 # --- 進階查詢函式 ---
 
@@ -229,17 +228,6 @@ def find_on_base_streaks(
         models.AtBatDetailDB.inning,
         models.AtBatDetailDB.sequence_in_game,
     )
-
-    # (可選) 如果仍需除錯，請使用這個乾淨的 print 區塊
-    print("--- GENERATED SQL (Optimized) ---")
-    print(
-        str(
-            final_query.statement.compile(
-                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
-            )
-        )
-    )
-    print("---------------------------------")
 
     # 執行查詢
     all_at_bats = final_query.all()

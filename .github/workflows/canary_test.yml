@@ -38,6 +38,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
           DRAMATIQ_BROKER_URL: redis://localhost:6379/0
+          REDIS_CACHE_URL: redis://localhost:6379/1
           API_KEY: test-ci-key
           TARGET_TEAM_NAME: "台鋼雄鷹"
           TARGET_TEAMS: '["台鋼雄鷹"]'

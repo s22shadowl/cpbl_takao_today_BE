@@ -5,6 +5,7 @@ import pytest
 from unittest.mock import MagicMock
 
 import redis.exceptions
+from fastapi.encoders import jsonable_encoder
 
 # 待測試的模組
 from app import cache
@@ -69,7 +70,8 @@ def test_cache_miss(mock_redis):
     """
     # 準備
     mock_redis.get.return_value = None  # 模擬 Redis 中沒有資料
-    original_func = MagicMock(return_value={"data": "live_result"})
+    live_result = {"data": "live_result"}
+    original_func = MagicMock(return_value=live_result)
 
     @cache.cache()
     def cached_endpoint(request: MagicMock):
@@ -80,13 +82,13 @@ def test_cache_miss(mock_redis):
     result = cached_endpoint(request=request)
 
     # 驗證
-    assert result == {"data": "live_result"}
+    assert result == live_result
     original_func.assert_called_once()
     mock_redis.get.assert_called_once()
 
-    # 驗證 setex 被呼叫，且傳入的參數正確
+    # 【修改】驗證 setex 被呼叫，且傳入的值是經過 jsonable_encoder 處理的
     expected_key = "test_cache:cached_endpoint:id=123"
-    expected_value = json.dumps({"data": "live_result"}, default=str)
+    expected_value = json.dumps(jsonable_encoder(live_result))
     mock_redis.setex.assert_called_once_with(expected_key, 3600 * 24, expected_value)
 
 
@@ -117,15 +119,15 @@ def test_cache_hit(mock_redis):
     mock_redis.setex.assert_not_called()  # 驗證沒有再次寫入快取
 
 
-def test_cache_redis_connection_error(mock_redis):
+def test_cache_redis_operational_error(mock_redis):
     """
-    測試當 Redis 連線失敗時，裝飾器是否能優雅地失敗。
+    【修改】測試當 Redis 在操作中 (get/set) 失敗時，裝飾器是否能優雅地失敗。
     預期行為：
     1. 原始函式被呼叫一次。
     2. 程式不應崩潰，應正常回傳原始函式的結果。
     """
     # 準備
-    mock_redis.ping.side_effect = redis.exceptions.ConnectionError
+    mock_redis.get.side_effect = redis.exceptions.RedisError("Operation failed")
     original_func = MagicMock(return_value={"data": "live_result_from_fallback"})
 
     @cache.cache()
@@ -139,5 +141,28 @@ def test_cache_redis_connection_error(mock_redis):
     # 驗證
     assert result == {"data": "live_result_from_fallback"}
     original_func.assert_called_once()
-    mock_redis.get.assert_not_called()  # 驗證未嘗試讀取快取
+    mock_redis.get.assert_called_once()  # 驗證嘗試讀取快取
     mock_redis.setex.assert_not_called()  # 驗證未嘗試寫入快取
+
+
+def test_cache_disabled_if_redis_fails_on_startup(mocker):
+    """
+    【新增】測試當 Redis 在啟動時就連線失敗 (redis_client is None) 的情境。
+    預期行為：
+    1. 裝飾器直接執行原始函式，完全跳過所有 Redis 操作。
+    """
+    # 準備
+    mocker.patch("app.cache.redis_client", None)  # 模擬 redis_client 為 None
+    original_func = MagicMock(return_value={"data": "live_result_redis_disabled"})
+
+    @cache.cache()
+    def cached_endpoint(request: MagicMock):
+        return original_func(request=request)
+
+    # 執行
+    request = mock_request_with_params({"id": "123"})
+    result = cached_endpoint(request=request)
+
+    # 驗證
+    assert result == {"data": "live_result_redis_disabled"}
+    original_func.assert_called_once()

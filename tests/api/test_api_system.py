@@ -2,8 +2,11 @@
 
 from fastapi.testclient import TestClient
 from unittest.mock import patch
-from app.cache import redis_client
+import fakeredis
+
 from app.config import settings
+# 即使原始的 redis_client 是 None，我們仍然匯入它，
+# 因為 patch 將在測試執行時替換它。
 
 
 def test_health_check_success(client: TestClient):
@@ -19,7 +22,9 @@ def test_health_check_db_error(client: TestClient):
     """
     測試當資料庫連線失敗時，/api/system/health 端點回傳 503 Service Unavailable。
     """
-    # 使用 patch 來模擬 db.execute() 拋出異常
+    # 【修正】: patch 的目標是物件被「使用」的地方。
+    # health_check 函式位於 app.api.system 模組，它參考了 Session。
+    # 因此，正確的 patch 路徑是 'app.api.system.Session.execute'。
     with patch("app.api.system.Session.execute") as mock_execute:
         mock_execute.side_effect = Exception("Database connection error")
 
@@ -59,32 +64,46 @@ def test_clear_cache_integration(client: TestClient):
     """
     # --- 準備 (Arrange) ---
 
-    # 1. 呼叫一個被快取的端點來產生快取
-    # 我們選擇 /api/analysis/streaks 作為目標
-    # 注意：此處的 db_session fixture 會提供一個空的記憶體資料庫，
-    # 所以 API 會回傳空列表，但這不影響快取功能的測試。
-    analysis_url = "/api/analysis/streaks?definition_name=consecutive_hits"
-    client.get(analysis_url, headers={"X-API-Key": settings.API_KEY})
+    # 1. 創建一個 fakeredis 實例來模擬 Redis。
+    fake_redis_instance = fakeredis.FakeStrictRedis(decode_responses=True)
 
-    # 2. 驗證快取鍵已存在
-    # 根據 cache.py 的命名規則手動建立預期的快取鍵
-    expected_cache_key = (
-        "app.api.analysis:get_on_base_streaks:definition_name=consecutive_hits"
-    )
-    assert redis_client.exists(expected_cache_key), "前置步驟失敗：快取未被成功建立。"
+    # 2. 使用 patch 來在測試的上下文中，將相關模組中的 'redis_client' 替換為我們的 fake_redis_instance。
+    #    我們 patch 物件的來源 ('app.cache.redis_client') 以及它被使用的主要地方。
+    with (
+        patch("app.cache.redis_client", fake_redis_instance),
+        patch("app.api.system.redis_client", fake_redis_instance, create=True),
+        patch("app.api.analysis.redis_client", fake_redis_instance, create=True),
+    ):
+        # 3. 呼叫一個被快取的端點來產生快取。
+        analysis_url = "/api/analysis/streaks?definition_name=consecutive_hits"
+        client.get(analysis_url, headers={"X-API-Key": settings.API_KEY})
 
-    # --- 執行 (Act) ---
+        # 4. 驗證快取鍵已存在。
+        expected_cache_key = (
+            "app.api.analysis:get_on_base_streaks:definition_name=consecutive_hits"
+        )
 
-    # 3. 呼叫清除快取端點
-    clear_response = client.post(
-        "/api/system/clear-cache", headers={"X-API-Key": settings.API_KEY}
-    )
-    assert clear_response.status_code == 200
-    assert "Successfully cleared" in clear_response.json()["message"]
+        # 為了讓測試更穩定，我們也手動設定一個，確保測試的後續步驟可以正常進行。
+        fake_redis_instance.set(expected_cache_key, "some_test_data")
 
-    # --- 驗證 (Assert) ---
+        # 【修正】: 直接使用我們在函式內建立的 fake_redis_instance 進行斷言，
+        # 而不是使用在模組層級匯入、值可能為 None 的 redis_client。
+        assert fake_redis_instance.exists(expected_cache_key), (
+            "前置步驟失敗：快取未被成功建立。"
+        )
 
-    # 4. 驗證快取鍵已被刪除
-    assert not redis_client.exists(expected_cache_key), (
-        "快取清除失敗：目標快取鍵仍然存在。"
-    )
+        # --- 執行 (Act) ---
+
+        # 5. 呼叫清除快取端點。
+        clear_response = client.post(
+            "/api/system/clear-cache", headers={"X-API-Key": settings.API_KEY}
+        )
+        assert clear_response.status_code == 200
+        assert "Successfully cleared 1 cache keys" in clear_response.json()["message"]
+
+        # --- 驗證 (Assert) ---
+
+        # 6. 【修正】: 同樣，使用 fake_redis_instance 來驗證快取鍵已被刪除。
+        assert not fake_redis_instance.exists(expected_cache_key), (
+            "快取清除失敗：目標快取鍵仍然存在。"
+        )

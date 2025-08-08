@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     # 應用程式主要使用的設定
     DATABASE_URL: str
     DRAMATIQ_BROKER_URL: str
+    REDIS_CACHE_URL: str  # 【新增】專門用於應用層快取的 Redis URL
     API_KEY: str
 
     # [新增] 批次匯入腳本專用設定

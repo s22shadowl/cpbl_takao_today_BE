@@ -31,7 +31,7 @@ def apply_test_settings(monkeypatch, request):
         return
     else:
         monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
-        monkeypatch.setenv("DRAMATIQ_BROKER_URL", "redis://localhost:6379/1")
+        monkeypatch.setenv("DRAMATIQ_BROKER_URL", "redis://localhost:6379/0")
         monkeypatch.setenv("API_KEY", "test-api-key-for-pytest")
         yield
 
