@@ -18,12 +18,12 @@
 
 # Bash
 
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python bulk_import.py scrape --start YYYY-MM-DD --end YYYY-MM-DD"
+# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start YYYY-MM-DD --end YYYY-MM-DD"
 # 範例 (爬取 2025 年整個 4 月的資料)：
 
 # Bash
 
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python bulk_import.py scrape --start 2025-04-01 --end 2025-04-30"
+# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2025-03-01 --end 2025-04-30"
 # 腳本會開始逐日爬取資料，並將所有結果存入由 STAGING_DATABASE_URL 指定的資料庫。
 
 # 步驟二：[手動] 驗證暫存資料

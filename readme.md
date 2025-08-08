@@ -79,20 +79,20 @@ graph TD
 
 ## 技術棧 (Tech Stack)
 
-| 類別 | 技術 |
-| --- | --- |
-| **後端框架** | FastAPI, Uvicorn |
-| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic |
-| **背景任務佇列** | Dramatiq, Redis (Aiven) |
-| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests |
-| **容器化** | Docker, Docker Compose |
-| **雲端平台** | Fly.io |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff |
-| **測試框架** | pytest, pytest-mock, pytest-playwright |
-| **設定管理** | pydantic-settings |
-| **日誌** | python-json-logger |
-| **虛擬顯示** | Xvfb (X virtual framebuffer) |
-| **依賴項安全** | pip-audit |
+| 類別                   | 技術                                   |
+| ---------------------- | -------------------------------------- |
+| **後端框架**           | FastAPI, Uvicorn                       |
+| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
+| **背景任務佇列**       | Dramatiq, Redis (Aiven)                |
+| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
+| **容器化**             | Docker, Docker Compose                 |
+| **雲端平台**           | Fly.io                                 |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
+| **測試框架**           | pytest, pytest-mock, pytest-playwright |
+| **設定管理**           | pydantic-settings                      |
+| **日誌**               | python-json-logger                     |
+| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
+| **依賴項安全**         | pip-audit                              |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -115,13 +115,13 @@ cp .env.example .env
 
 接著，請修改 `.env` 檔案的內容。以下是所有必要環境變數的說明：
 
-| 變數名稱 | 說明 | 格式範例 |
-| --- | --- | --- |
-| `DATABASE_URL` | **必要。** 本地開發資料庫的連線字串。 | `postgresql://myuser:mypassword@db:5432/mydb` |
-| `DRAMATIQ_BROKER_URL` | **必要。** 本地開發 Redis 的連線字串。 | `redis://redis:6379/0` |
-| `API_KEY` | **必要。** 用於保護 API 端點的密鑰。 | `your_secret_api_key_here` |
-| `TARGET_TEAMS` | **必要。** 爬蟲要鎖定的球隊名稱列表。 | `["味全龍","中信兄弟"]` |
-| `TARGET_PLAYERS` | **必要。** 爬蟲要鎖定的球員名稱列表。 | `["吉力吉撈．鞏冠","曾頌恩"]` |
+| 變數名稱              | 說明                                   | 格式範例                                      |
+| --------------------- | -------------------------------------- | --------------------------------------------- |
+| `DATABASE_URL`        | **必要。** 本地開發資料庫的連線字串。  | `postgresql://myuser:mypassword@db:5432/mydb` |
+| `DRAMATIQ_BROKER_URL` | **必要。** 本地開發 Redis 的連線字串。 | `redis://redis:6379/0`                        |
+| `API_KEY`             | **必要。** 用於保護 API 端點的密鑰。   | `your_secret_api_key_here`                    |
+| `TARGET_TEAMS`        | **必要。** 爬蟲要鎖定的球隊名稱列表。  | `["味全龍","中信兄弟"]`                       |
+| `TARGET_PLAYERS`      | **必要。** 爬蟲要鎖定的球員名稱列表。  | `["吉力吉撈．鞏冠","曾頌恩"]`                 |
 
 **重要**: `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式，以確保 Pydantic 在所有環境下都能正確解析。
 
@@ -173,7 +173,7 @@ cp .env.example .env
 **指令格式:**
 
 ```bash
-docker compose run --rm web python bulk_import.py [OPTIONS]
+docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape [OPTIONS]"
 ```
 
 **Options:**
@@ -185,7 +185,7 @@ docker compose run --rm web python bulk_import.py [OPTIONS]
 **範例:** 爬取 2024 年 4 月 1 日至 10 日的數據
 
 ```bash
-docker compose run --rm web python bulk_import.py --start 2024-04-01 --end 2024-04-10
+docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2024-04-01 --end 2024-04-10"
 ```
 
 此指令會在 `web` 容器中執行腳本，並將結果存入由 `DATABASE_URL` 指定的資料庫。
@@ -270,6 +270,7 @@ docker compose run --rm web python bulk_import.py --start 2024-04-01 --end 2024-
    ```bash
    fly deploy
    ```
+
    `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
 
 ## 本地日誌查看技巧 (Local Log Viewing)

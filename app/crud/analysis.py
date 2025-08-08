@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session, joinedload, aliased
 from sqlalchemy import func, or_, select
 from app.config import settings
+from sqlalchemy.dialects import postgresql
 
 # --- 進階查詢函式 ---
 
@@ -206,7 +207,6 @@ def find_on_base_streaks(
     query = (
         db.query(models.AtBatDetailDB)
         .join(models.PlayerGameSummaryDB)
-        .join(models.GameResultDB)
         .options(
             joinedload(models.AtBatDetailDB.player_summary).joinedload(
                 models.PlayerGameSummaryDB.game
@@ -221,14 +221,28 @@ def find_on_base_streaks(
             .where(models.PlayerGameSummaryDB.player_name.in_(player_names))
             .distinct()
         )
-        query = query.filter(models.PlayerGameSummaryDB.game_id.in_(game_ids_subquery))
+        query = query.filter(models.AtBatDetailDB.game_id.in_(game_ids_subquery))
 
-    # 排序是為了後續在 Python 中能正確處理序列
-    all_at_bats = query.order_by(
-        models.GameResultDB.id,
+    # 建立最終的、使用優化後排序的查詢
+    final_query = query.order_by(
+        models.AtBatDetailDB.game_id,
         models.AtBatDetailDB.inning,
         models.AtBatDetailDB.sequence_in_game,
-    ).all()
+    )
+
+    # (可選) 如果仍需除錯，請使用這個乾淨的 print 區塊
+    print("--- GENERATED SQL (Optimized) ---")
+    print(
+        str(
+            final_query.statement.compile(
+                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+            )
+        )
+    )
+    print("---------------------------------")
+
+    # 執行查詢
+    all_at_bats = final_query.all()
 
     # 3. 根據查詢類型，選擇不同的處理策略
     all_streaks = []
@@ -236,7 +250,7 @@ def find_on_base_streaks(
         # 策略一：尋找符合指定「連續」序列的連線
         target_list = player_names if player_names else lineup_positions
         target_len = len(target_list)
-        if target_len < min_length:  # 如果指定序列長度小於最小要求，則無結果
+        if target_len < min_length:
             return []
 
         for i in range(len(all_at_bats) - target_len + 1):
@@ -245,8 +259,7 @@ def find_on_base_streaks(
             # 檢查點 1: 所有打席必須在同一個半局
             first_ab = potential_streak[0]
             if not all(
-                ab.player_summary.game_id == first_ab.player_summary.game_id
-                and ab.inning == first_ab.inning
+                ab.game_id == first_ab.game_id and ab.inning == first_ab.inning
                 for ab in potential_streak
             ):
                 continue
@@ -282,7 +295,7 @@ def find_on_base_streaks(
             if current_streak:
                 prev_at_bat = current_streak[-1]
                 if (
-                    prev_at_bat.player_summary.game_id == at_bat.player_summary.game_id
+                    prev_at_bat.game_id == at_bat.game_id
                     and prev_at_bat.inning == at_bat.inning
                 ):
                     is_continuous = True

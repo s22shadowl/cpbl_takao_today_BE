@@ -2,7 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 import logging.config
 from sqlalchemy.pool import StaticPool
@@ -56,8 +56,37 @@ def engine():
 
 @pytest.fixture(scope="session")
 def TestingSessionLocal(engine):
-    """根據測試 engine 建立 sessionmaker。"""
-    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    """根據測試 engine 建立 sessionmaker，並附加事件監聽器以修復測試。"""
+    # --- 開始修改 ---
+    # 將模型匯入移至 fixture 內部，確保在 app 載入前執行
+    from app.models import AtBatDetailDB, PlayerGameSummaryDB
+
+    Session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+    def before_flush_listener(session, flush_context, instances):
+        """
+        在 session flush 到資料庫前，自動為新的 AtBatDetailDB 物件
+        回填 denormalized 的 game_id，以修復因模型變更導致的單元測試失效。
+        """
+        for instance in session.new:
+            if isinstance(instance, AtBatDetailDB) and not instance.game_id:
+                # 檢查 instance 是否為 AtBatDetailDB 且缺少 game_id
+                if instance.player_summary:
+                    # 如果測試程式碼已填充 relationship，直接使用
+                    instance.game_id = instance.player_summary.game_id
+                elif instance.player_game_summary_id:
+                    # 如果只設定了 foreign key，則透過 session 查詢關聯物件
+                    summary = session.get(
+                        PlayerGameSummaryDB, instance.player_game_summary_id
+                    )
+                    if summary:
+                        instance.game_id = summary.game_id
+
+    # 將監聽器附加到 Session 類別的 'before_flush' 事件
+    event.listen(Session, "before_flush", before_flush_listener)
+
+    return Session
+    # --- 結束修改 ---
 
 
 # --- 資料庫 Fixture ---

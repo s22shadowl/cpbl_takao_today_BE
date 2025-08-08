@@ -129,6 +129,8 @@ class AtBatDetailDB(Base):
     __tablename__ = "at_bat_details"
 
     id = Column(Integer, primary_key=True, index=True)
+    # 新增 game_id 欄位，並建立外鍵關聯與索引
+    game_id = Column(Integer, ForeignKey("game_results.id"), nullable=False, index=True)
     player_game_summary_id = Column(
         Integer, ForeignKey("player_game_summary.id"), nullable=False
     )
