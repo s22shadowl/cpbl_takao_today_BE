@@ -67,7 +67,7 @@ def test_store_player_game_data_with_details(db_session):
         "home_team": "H",
         "away_team": "A",
     }
-    game_id = games.store_game_and_get_id(db, game_info)
+    game_id = games.create_game_and_get_id(db, game_info)
     db.commit()
     assert game_id is not None
 

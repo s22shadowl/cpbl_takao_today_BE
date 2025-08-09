@@ -5,48 +5,70 @@ import datetime
 from typing import List, Dict, Any
 
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import and_
 
 from app import models
 
 
-def store_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
+def delete_game_if_exists(db: Session, cpbl_game_id: str, game_date: datetime.date):
     """
-    【ORM版】準備單場比賽概要資訊以供儲存。
-    如果比賽記錄已存在，則不進行任何操作。
-    :return: 該筆比賽記錄在資料庫中的 id (int)，如果失敗則返回 None
+    【新增】根據 CPBL Game ID 和比賽日期，檢查並刪除已存在的比賽紀錄。
+    利用 SQLAlchemy 的 cascade 行為，一併刪除關聯的 player_summaries 和 at_bat_details。
+    """
+    try:
+        existing_game = (
+            db.query(models.GameResultDB)
+            .filter(
+                and_(
+                    models.GameResultDB.cpbl_game_id == cpbl_game_id,
+                    models.GameResultDB.game_date == game_date,
+                )
+            )
+            .first()
+        )
+
+        if existing_game:
+            logging.info(
+                f"找到已存在的比賽紀錄 (ID: {existing_game.id}, Date: {game_date})，準備刪除..."
+            )
+            db.delete(existing_game)
+            db.flush()  # 執行刪除操作以確保 cascade 生效
+            logging.info("已成功刪除舊的比賽紀錄及其關聯資料。")
+
+    except Exception as e:
+        logging.error(f"刪除舊比賽紀錄時發生錯誤: {e}", exc_info=True)
+        raise
+
+
+def create_game_and_get_id(db: Session, game_info: Dict[str, Any]) -> int | None:
+    """
+    【修改】儲存單場比賽概要資訊。
+    此函式現在假設舊資料已被處理，只負責新增。
+    :return: 新比賽記錄在資料庫中的 id (int)，如果失敗則返回 None
     """
     try:
         cpbl_game_id = game_info.get("cpbl_game_id")
         if not cpbl_game_id:
             return None
 
-        existing_game = (
-            db.query(models.GameResultDB)
-            .filter(models.GameResultDB.cpbl_game_id == cpbl_game_id)
-            .first()
-        )
-
-        if existing_game:
-            return existing_game.id
-        else:
-            game_data_for_db = {
-                "cpbl_game_id": game_info.get("cpbl_game_id"),
-                "game_date": datetime.datetime.strptime(
-                    game_info["game_date"], "%Y-%m-%d"
-                ).date(),
-                "game_time": game_info.get("game_time"),
-                "home_team": game_info.get("home_team"),
-                "away_team": game_info.get("away_team"),
-                "home_score": game_info.get("home_score"),
-                "away_score": game_info.get("away_score"),
-                "venue": game_info.get("venue"),
-                "status": game_info.get("status"),
-            }
-            new_game = models.GameResultDB(**game_data_for_db)
-            db.add(new_game)
-            db.flush()
-            logging.info(f"準備新增比賽結果到資料庫: {new_game.cpbl_game_id}")
-            return new_game.id
+        game_data_for_db = {
+            "cpbl_game_id": game_info.get("cpbl_game_id"),
+            "game_date": datetime.datetime.strptime(
+                game_info["game_date"], "%Y-%m-%d"
+            ).date(),
+            "game_time": game_info.get("game_time"),
+            "home_team": game_info.get("home_team"),
+            "away_team": game_info.get("away_team"),
+            "home_score": game_info.get("home_score"),
+            "away_score": game_info.get("away_score"),
+            "venue": game_info.get("venue"),
+            "status": game_info.get("status"),
+        }
+        new_game = models.GameResultDB(**game_data_for_db)
+        db.add(new_game)
+        db.flush()
+        logging.info(f"準備新增比賽結果到資料庫: {new_game.cpbl_game_id}")
+        return new_game.id
 
     except Exception as e:
         logging.error(f"準備儲存比賽結果時出錯: {e}", exc_info=True)

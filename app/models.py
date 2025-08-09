@@ -74,7 +74,10 @@ class GameResultDB(Base):
     attendance = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    player_summaries = relationship("PlayerGameSummaryDB", back_populates="game")
+    # 【修正】新增 cascade="all, delete-orphan" 以確保級聯刪除正常運作
+    player_summaries = relationship(
+        "PlayerGameSummaryDB", back_populates="game", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -118,7 +121,10 @@ class PlayerGameSummaryDB(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     game = relationship("GameResultDB", back_populates="player_summaries")
-    at_bat_details = relationship("AtBatDetailDB", back_populates="player_summary")
+    # 【修正】新增 cascade="all, delete-orphan"
+    at_bat_details = relationship(
+        "AtBatDetailDB", back_populates="player_summary", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("game_id", "player_name", "team_name", name="_game_player_uc"),

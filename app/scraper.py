@@ -10,11 +10,11 @@ from typing import Dict, List, Optional
 from app.crud import games, players
 from app.utils.state_machine import _update_outs_count, _update_runners_state
 
-from app.config import settings, TEAM_CLUB_CODES
+from app.config import settings
 from app.core import fetcher
 from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
-from app.exceptions import ScraperError  # 引入基礎錯誤類別
+from app.exceptions import ScraperError
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 def scrape_and_store_season_stats():
     """抓取並儲存目標球員的球季累積數據。"""
     # TODO: 此函式未來也應重構，以支援多球隊數據的抓取
-    club_no = TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
+    club_no = settings.TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
     if not club_no:
         logger.error(
             f"在設定中找不到球隊 [{settings.TARGET_TEAM_NAME}] 的代碼 (ClubNo)。"
@@ -35,11 +35,9 @@ def scrape_and_store_season_stats():
     team_stats_url = f"{settings.TEAM_SCORE_URL}?ClubNo={club_no}"
     logger.info(f"--- 開始抓取球季累積數據，URL: {team_stats_url} ---")
 
-    # 錯誤會由 fetcher 拋出
     html_content = fetcher.get_dynamic_page_content(
         team_stats_url, wait_for_selector="div.RecordTable"
     )
-    # 錯誤會由 parser 拋出
     season_stats_list = season_stats.parse_season_stats_page(html_content)
     if not season_stats_list:
         logger.info("未解析到任何球員的球季數據。")
@@ -47,7 +45,6 @@ def scrape_and_store_season_stats():
 
     db = SessionLocal()
     try:
-        # 核心修正：移除 try/except，讓資料庫錯誤可以被上層 actor 捕捉
         players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
     finally:
@@ -69,7 +66,6 @@ def _process_filtered_games(
         db = SessionLocal()
         try:
             for game_info in games_to_process:
-                # 在 E2E 模式下，我們只關心資料是否能成功寫入
                 if settings.TARGET_TEAM_NAME not in [
                     game_info.get("home_team"),
                     game_info.get("away_team"),
@@ -79,7 +75,15 @@ def _process_filtered_games(
                 logger.info(
                     f"[E2E] 正在儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
                 )
-                game_id_in_db = games.store_game_and_get_id(db, game_info)
+
+                game_date = datetime.datetime.strptime(
+                    game_info["game_date"], "%Y-%m-%d"
+                ).date()
+                games.delete_game_if_exists(
+                    db, game_info.get("cpbl_game_id"), game_date
+                )
+                game_id_in_db = games.create_game_and_get_id(db, game_info)
+
                 if not game_id_in_db:
                     logger.warning(
                         f"[E2E] 無法儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
@@ -89,7 +93,7 @@ def _process_filtered_games(
                 fake_player_data = [
                     {
                         "summary": {
-                            "player_name": settings.TARGET_PLAYER_NAMES[0],
+                            "player_name": settings.get_target_players_as_list()[0],
                             "team_name": settings.TARGET_TEAM_NAME,
                             "batting_order": "1",
                             "position": "CF",
@@ -118,7 +122,6 @@ def _process_filtered_games(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            # [修改] 將延遲參數改為從 settings 讀取
             slow_mo=settings.PLAYWRIGHT_SLOW_MO,
             handle_sigint=False,
             handle_sigterm=False,
@@ -135,9 +138,18 @@ def _process_filtered_games(
                     continue
 
                 logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
-                game_id_in_db = games.store_game_and_get_id(db, game_info)
+
+                game_date = datetime.datetime.strptime(
+                    game_info["game_date"], "%Y-%m-%d"
+                ).date()
+                games.delete_game_if_exists(
+                    db, game_info.get("cpbl_game_id"), game_date
+                )
+                game_id_in_db = games.create_game_and_get_id(db, game_info)
+
                 if not game_id_in_db:
                     continue
+
                 box_score_url = game_info.get("box_score_url")
                 if not box_score_url:
                     continue
@@ -172,7 +184,6 @@ def _process_filtered_games(
                     logger.info(f"處理第 {inning_num} 局...")
                     inning_li.click()
                     expect(inning_li).to_have_class(re.compile(r"active"))
-                    # [修改] 將靜態延遲改為從 settings 讀取
                     page.wait_for_timeout(settings.PLAYWRIGHT_STATIC_DELAY)
                     active_inning_content = page.locator(
                         "div.InningPlaysGroup div.tab_cont.active"
@@ -191,10 +202,7 @@ def _process_filtered_games(
                             )
                             for button in expand_buttons:
                                 try:
-                                    # [修改] 將可見性檢查的超時改為從 settings 讀取
-                                    if button.is_visible(
-                                        timeout=500
-                                    ):  # 暫時保留，此 timeout 較為特殊
+                                    if button.is_visible(timeout=500):
                                         button.click(timeout=500)
                                 except Exception:
                                     pass
@@ -319,7 +327,10 @@ def scrape_single_day(
         )
         return
 
-    _process_filtered_games(games_for_day, target_teams=settings.TARGET_TEAMS)
+    # 【修正】改回呼叫 config 中的輔助函式
+    _process_filtered_games(
+        games_for_day, target_teams=settings.get_target_teams_as_list()
+    )
     logger.info(f"--- [單日模式] 日期 {specific_date} 執行完畢 ---")
 
 
@@ -353,7 +364,10 @@ def scrape_entire_month(month_str=None):
         for game in all_month_games
         if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date() <= today
     ]
-    _process_filtered_games(games_to_process, target_teams=settings.TARGET_TEAMS)
+    # 【修正】改回呼叫 config 中的輔助函式
+    _process_filtered_games(
+        games_to_process, target_teams=settings.get_target_teams_as_list()
+    )
 
     logger.info("--- [逐月模式] 執行完畢 ---")
 
@@ -368,7 +382,6 @@ def scrape_entire_year(year_str=None):
         logger.warning(f"目標年份 {year_to_scrape} 是未來年份，任務中止。")
         return
 
-    # [修改] 將硬式編碼的月份改為從 settings 讀取
     end_month = (
         today.month if year_to_scrape == today.year else settings.CPBL_SEASON_END_MONTH
     )
@@ -388,12 +401,11 @@ def scrape_entire_year(year_str=None):
                 if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date()
                 <= today
             ]
+            # 【修正】改回呼叫 config 中的輔助函式
             _process_filtered_games(
-                games_to_process, target_teams=settings.TARGET_TEAMS
+                games_to_process, target_teams=settings.get_target_teams_as_list()
             )
         except ScraperError:
-            # 核心修正：捕捉所有自訂的爬蟲錯誤
-            # 記錄詳細錯誤，但不中斷整個逐年爬蟲，讓其他月份可以繼續
             logger.error(
                 f"處理月份 {year_to_scrape}-{month:02d} 時發生爬蟲錯誤，已跳過此月份。",
                 exc_info=True,

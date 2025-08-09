@@ -5,8 +5,8 @@ from app import models
 from app.crud import games
 
 
-def test_store_game_and_get_id(db_session):
-    """測試 store_game_and_get_id 函式"""
+def test_create_game_and_get_id(db_session):
+    """【修改】測試 create_game_and_get_id 函式"""
     db = db_session
 
     game_info = {
@@ -17,19 +17,99 @@ def test_store_game_and_get_id(db_session):
         "status": "已完成",
     }
 
-    game_id = games.store_game_and_get_id(db, game_info)
+    # 首次建立
+    game_id = games.create_game_and_get_id(db, game_info)
     db.commit()
     assert game_id is not None
 
     game_in_db = db.query(models.GameResultDB).filter_by(id=game_id).first()
     assert game_in_db is not None
     assert game_in_db.cpbl_game_id == "TEST01"
+    assert db.query(models.GameResultDB).count() == 1
 
-    game_id_again = games.store_game_and_get_id(db, game_info)
-    assert game_id_again == game_id
 
-    count = db.query(models.GameResultDB).count()
-    assert count == 1
+def test_delete_game_if_exists(db_session):
+    """【新增】測試 delete_game_if_exists 函式"""
+    db = db_session
+
+    # 準備一筆完整的比賽資料 (Game -> Summary -> AtBat)
+    game = models.GameResultDB(
+        cpbl_game_id="DEL01",
+        game_date=datetime.date(2025, 8, 8),
+        home_team="H",
+        away_team="A",
+    )
+    db.add(game)
+    db.flush()
+    summary = models.PlayerGameSummaryDB(game_id=game.id, player_name="測試員")
+    db.add(summary)
+    db.flush()
+    at_bat = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        game_id=game.id,
+        result_short="一安",
+    )
+    db.add(at_bat)
+    db.commit()
+
+    assert db.query(models.GameResultDB).count() == 1
+    assert db.query(models.PlayerGameSummaryDB).count() == 1
+    assert db.query(models.AtBatDetailDB).count() == 1
+
+    # 執行刪除
+    games.delete_game_if_exists(db, "DEL01", datetime.date(2025, 8, 8))
+    db.commit()
+
+    # 驗證所有關聯資料都已被級聯刪除
+    assert db.query(models.GameResultDB).count() == 0
+    assert db.query(models.PlayerGameSummaryDB).count() == 0
+    assert db.query(models.AtBatDetailDB).count() == 0
+
+    # 測試刪除一個不存在的比賽，不應發生任何錯誤
+    try:
+        games.delete_game_if_exists(db, "NON_EXISTENT", datetime.date(2025, 8, 9))
+        db.commit()
+    except Exception as e:
+        assert False, f"刪除不存在的比賽時不應拋出異常: {e}"
+
+
+def test_idempotency_delete_then_create(db_session):
+    """【新增】整合測試，驗證「先刪除後新增」的冪等性流程"""
+    db = db_session
+
+    # 第一次執行，建立初始資料
+    initial_info = {
+        "cpbl_game_id": "IDEMP01",
+        "game_date": "2025-09-01",
+        "home_team": "主隊",
+        "away_team": "客隊",
+        "status": "比賽中",
+    }
+    games.delete_game_if_exists(db, "IDEMP01", datetime.date(2025, 9, 1))
+    games.create_game_and_get_id(db, initial_info)
+    db.commit()
+
+    assert db.query(models.GameResultDB).count() == 1
+    game_v1 = db.query(models.GameResultDB).filter_by(cpbl_game_id="IDEMP01").first()
+    assert game_v1.status == "比賽中"
+
+    # 第二次執行，使用更新後的資料
+    updated_info = {
+        "cpbl_game_id": "IDEMP01",
+        "game_date": "2025-09-01",
+        "home_team": "主隊",
+        "away_team": "客隊",
+        "status": "已完成",  # 狀態已更新
+    }
+    games.delete_game_if_exists(db, "IDEMP01", datetime.date(2025, 9, 1))
+    games.create_game_and_get_id(db, updated_info)
+    db.commit()
+
+    # 驗證資料庫中仍然只有一筆紀錄，且內容是更新後的
+    assert db.query(models.GameResultDB).count() == 1
+    game_v2 = db.query(models.GameResultDB).filter_by(cpbl_game_id="IDEMP01").first()
+    assert game_v2 is not None
+    assert game_v2.status == "已完成"
 
 
 def test_update_and_get_game_schedules(db_session):
@@ -95,10 +175,16 @@ def test_get_game_with_details(db_session):
     db.flush()
 
     detail1 = models.AtBatDetailDB(
-        player_game_summary_id=summary.id, sequence_in_game=1, result_short="全壘打"
+        player_game_summary_id=summary.id,
+        game_id=game.id,  # 明確設定 game_id
+        sequence_in_game=1,
+        result_short="全壘打",
     )
     detail2 = models.AtBatDetailDB(
-        player_game_summary_id=summary.id, sequence_in_game=2, result_short="保送"
+        player_game_summary_id=summary.id,
+        game_id=game.id,  # 明確設定 game_id
+        sequence_in_game=2,
+        result_short="保送",
     )
     db.add_all([detail1, detail2])
     db.commit()

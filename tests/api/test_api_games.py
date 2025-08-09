@@ -16,7 +16,7 @@ def test_get_games_by_date_success(client: TestClient, db_session: Session):
         "away_team": "測試客隊",
         "status": "已完成",
     }
-    games.store_game_and_get_id(db_session, game_info_1)
+    games.create_game_and_get_id(db_session, game_info_1)
     db_session.commit()
 
     response = client.get("/api/games/2025-06-21")

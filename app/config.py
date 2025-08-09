@@ -1,5 +1,6 @@
 # app/config.py
 
+import json
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional, Dict
 
@@ -8,6 +9,15 @@ from .core.constants import HITS, ON_BASE_RESULTS, ADVANCEMENT_RESULTS
 
 
 class Settings(BaseSettings):
+    TEAM_CLUB_CODES: Dict[str, str] = {
+        "味全龍": "ACN",
+        "樂天桃猿": "AAN",
+        "中信兄弟": "ADD",
+        "富邦悍將": "AJJ",
+        "統一7-ELEVEn獅": "AAA",
+        "台鋼雄鷹": "AHA",
+    }
+
     # **新增**: 從 .env 讀取並驗證 PostgreSQL 的獨立設定變數
     # 這些變數主要由 docker-compose.yml 使用
     POSTGRES_USER: Optional[str] = None
@@ -72,14 +82,17 @@ class Settings(BaseSettings):
     # 【新增】E2E 測試模式開關
     E2E_TEST_MODE: bool = False
 
+    def get_target_teams_as_list(self) -> List[str]:
+        """【修正】處理 str 或 list 型別的輸入，使其更穩健"""
+        if isinstance(self.TARGET_TEAMS, list):
+            return self.TARGET_TEAMS
+        return json.loads(self.TARGET_TEAMS)
+
+    def get_target_players_as_list(self) -> List[str]:
+        """【修正】處理 str 或 list 型別的輸入"""
+        if isinstance(self.TARGET_PLAYERS, list):
+            return self.TARGET_PLAYERS
+        return json.loads(self.TARGET_PLAYERS)
+
 
 settings = Settings()
-
-TEAM_CLUB_CODES = {
-    "中信兄弟": "ACN",
-    "統一7-ELEVEn獅": "ADD",
-    "樂天桃猿": "AJL",
-    "富邦悍將": "AEO",
-    "味全龍": "AAA",
-    "台鋼雄鷹": "AKP",
-}
