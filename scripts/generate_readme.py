@@ -274,8 +274,6 @@ def generate_readme_content():
         '     DATABASE_URL="<YOUR_FLY_POSTGRES_URL>" \\',
         '     DRAMATIQ_BROKER_URL="<YOUR_AIVEN_REDIS_URL>" \\',
         '     API_KEY="<YOUR_PRODUCTION_API_KEY>" \\',
-        '     TARGET_TEAMS=\'["味全龍","中信兄弟"]\' \\',
-        '     TARGET_PLAYERS=\'["吉力吉撈．鞏冠","曾頌恩"]\'',
         "   ```",
         "",
         "2. **部署應用**:",

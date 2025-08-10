@@ -81,21 +81,21 @@ graph TD
 
 ## 技術棧 (Tech Stack)
 
-| 類別 | 技術 |
-| --- | --- |
-| **後端框架** | FastAPI, Uvicorn |
-| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic |
-| **背景任務 / 快取** | Dramatiq, Redis (Aiven) |
-| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests |
-| **容器化** | Docker, Docker Compose |
-| **雲端平台** | Fly.io |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff |
-| **測試框架** | pytest, pytest-mock, pytest-playwright |
-| **負載測試** | Locust |
-| **設定管理** | pydantic-settings |
-| **日誌** | python-json-logger |
-| **虛擬顯示** | Xvfb (X virtual framebuffer) |
-| **依賴項安全** | pip-audit |
+| 類別                   | 技術                                   |
+| ---------------------- | -------------------------------------- |
+| **後端框架**           | FastAPI, Uvicorn                       |
+| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
+| **背景任務 / 快取**    | Dramatiq, Redis (Aiven)                |
+| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
+| **容器化**             | Docker, Docker Compose                 |
+| **雲端平台**           | Fly.io                                 |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
+| **測試框架**           | pytest, pytest-mock, pytest-playwright |
+| **負載測試**           | Locust                                 |
+| **設定管理**           | pydantic-settings                      |
+| **日誌**               | python-json-logger                     |
+| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
+| **依賴項安全**         | pip-audit                              |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -118,12 +118,12 @@ cp .env.example .env
 
 接著，請修改 `.env` 檔案的內容。以下是所有必要環境變數的說明：
 
-| 變數名稱 | 說明 | 格式範例 |
-| --- | --- | --- |
-| `DATABASE_URL` | **必要。** 本地開發資料庫的連線字串。 | `postgresql://myuser:mypassword@db:5432/mydb` |
-| `DRAMATIQ_BROKER_URL` | **必要。** 背景任務佇列 (Broker) 的 Redis 連線字串。 | `redis://redis:6379/0` |
-| `REDIS_CACHE_URL` | **必要。** 應用層快取 (Cache) 的 Redis 連線字串。 | `redis://redis:6379/1` |
-| `API_KEY` | **必要。** 用於保護 API 端點的密鑰。 | `your_secret_api_key_here` |
+| 變數名稱              | 說明                                                 | 格式範例                                      |
+| --------------------- | ---------------------------------------------------- | --------------------------------------------- |
+| `DATABASE_URL`        | **必要。** 本地開發資料庫的連線字串。                | `postgresql://myuser:mypassword@db:5432/mydb` |
+| `DRAMATIQ_BROKER_URL` | **必要。** 背景任務佇列 (Broker) 的 Redis 連線字串。 | `redis://redis:6379/0`                        |
+| `REDIS_CACHE_URL`     | **必要。** 應用層快取 (Cache) 的 Redis 連線字串。    | `redis://redis:6379/1`                        |
+| `API_KEY`             | **必要。** 用於保護 API 端點的密鑰。                 | `your_secret_api_key_here`                    |
 
 **重要**: `fly.toml` 中 `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式（且內部引號需轉義），以確保 Pydantic 能正確解析。
 
@@ -262,8 +262,6 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
      DATABASE_URL="<YOUR_FLY_POSTGRES_URL>" \
      DRAMATIQ_BROKER_URL="<YOUR_AIVEN_REDIS_URL>" \
      API_KEY="<YOUR_PRODUCTION_API_KEY>" \
-     TARGET_TEAMS='["味全龍","中信兄弟"]' \
-     TARGET_PLAYERS='["吉力吉撈．鞏冠","曾頌恩"]'
    ```
 
 2. **部署應用**:
@@ -272,6 +270,7 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
    ```bash
    fly deploy
    ```
+
    `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
 
 ## 本地日誌查看技巧 (Local Log Viewing)
