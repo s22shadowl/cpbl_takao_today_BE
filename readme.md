@@ -1,4 +1,4 @@
-# CPBL 數據後端專案 (v5.9+)
+# CPBL 數據後端專案
 
 ## 專案總覽 (Project Overview)
 
@@ -9,40 +9,39 @@
 ## 主要特色 (Features)
 
 - **通用數據抓取**: 自動抓取並儲存賽季中所有球隊、所有球員的逐打席紀錄，而非針對特定目標。
-
 - **歷史數據追蹤**: 記錄球員球季數據的歷史快照，可供分析其表現趨勢。
-
+- **高效能 API**: 透過資料庫查詢優化與應用層快取，確保複雜的分析型 API 也能快速回應。
 - **穩健的背景任務**: 使用 Dramatiq 與 Redis，將耗時的爬蟲工作與 API 伺服器分離。
-
-- **智慧重試與錯誤處理**: (v5.4 新增) 能自動從網路問題中恢復，並區分可重試與致命錯誤。
-
-- **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。
-
-- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。
-
-- **雲端原生架構**: (v5.9 更新) 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務，並整合 `Xvfb` 繞過反爬蟲機制。
-
 - **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力，並內建互動式 API 文件。
+- **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。
+- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。
+- **雲端原生架構**: 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務，並整合 `Xvfb` 繞過反爬蟲機制。
+- **自動化品質與安全**: 整合 pre-commit (Ruff) 與 GitHub Actions CI/CD 流程，並透過 `pip-audit` 進行依賴項安全掃描。
 
-- **服務健康監控與自癒**: (v5.2 更新) 內建 `/api/system/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+## 維運與韌性 (Operations & Resilience)
 
+- **服務健康監控與自癒**: 內建 `/api/system/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+- **智慧重試機制**: 背景任務能自動從可恢復的網路錯誤中恢復，並區分可重試與致命錯誤，避免佇列阻塞。
+- **冪等性爬蟲**: 每日爬蟲任務採用「先刪除後新增」策略，確保重複執行不會造成資料重複或不一致。
 - **結構化日誌與追蹤**: 所有日誌均為 JSON 格式，並為每個請求注入 `request_id`，大幅簡化問題排查。
 
-- **自動化品質與安全**: (v5.3 更新) 整合 pre-commit (Ruff) 與 GitHub Actions CI/CD 流程，並透過 `pip-audit` 進行依賴項安全掃描。
+## 效能優化 (Performance Optimizations)
+
+- **負載測試**: 整合 `Locust` 框架建立 API 效能基準，以科學方法識別瓶頸。
+- **資料庫反正規化**: 透過在 `at_bat_details` 表中新增 `game_id` 欄位，並建立複合索引，從根本上解決了昂貴的跨表 JOIN 排序問題。
+- **應用層快取**: 利用 Redis 為高成本的分析型 API 端點提供快取，並建立由 Worker 觸發的自動化快取失效機制，確保資料一致性。
 
 ## 生產環境架構 (Production Architecture)
 
 本專案在 Fly.io 上的生產環境由以下幾個核心元件組成：
 
 - **Fly App (`cpbl-takao-today-be`)**: 專案的主應用程式容器。
-
   - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求。
-
-  - **Worker Service (`worker`)**: (v5.9 更新) 運行 Dramatiq Worker，專門執行爬蟲任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器，確保爬蟲成功率。
-
+  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行爬蟲任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器。
 - **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務。
-
-- **Aiven Redis**: 作為外部第三方服務的 Redis，是 Dramatiq 所需的訊息代理。
+- **Aiven Redis**: 作為外部第三方服務，同時肩負兩種職責：
+  - **訊息代理 (Broker)**: 供 Dramatiq 使用 (db0)。
+  - **應用層快取 (Cache)**: 供 Web 服務使用 (db1)。
 
 ```mermaid
 graph TD
@@ -59,7 +58,7 @@ graph TD
     end
 
     subgraph "第三方服務"
-        Broker[(Aiven Redis)]
+        Redis[(Aiven Redis db0: Broker db1: Cache)]
     end
 
     subgraph "外部網站"
@@ -67,32 +66,36 @@ graph TD
     end
 
     Client -- "API 請求 (HTTPS)" --> Web
-    Web -- "1. 查詢請求" --> DB
-    DB -- "2. 回傳資料" --> Web
-    Web -- "3. 回應資料" --> Client
+    Web -- "1. 資料庫查詢" --> DB
+    Web -- "2. 快取讀寫" --> Redis
+    DB -- "3. 回傳資料" --> Web
+    Redis -- "4. 回傳快取" --> Web
+    Web -- "5. 回應資料" --> Client
 
-    Web -- "A. 發送背景任務" --> Broker
-    Broker -- "B. 任務入隊" --> Worker
+    Web -- "A. 發送背景任務" --> Redis
+    Redis -- "B. 任務入隊" --> Worker
     Worker -- "C. 執行爬蟲" --> CPBL
     Worker -- "D. 將結果寫入資料庫" --> DB
+    Worker -- "E. 清除快取" --> Web
 ```
 
 ## 技術棧 (Tech Stack)
 
-| 類別                   | 技術                                   |
-| ---------------------- | -------------------------------------- |
-| **後端框架**           | FastAPI, Uvicorn                       |
-| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
-| **背景任務佇列**       | Dramatiq, Redis (Aiven)                |
-| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
-| **容器化**             | Docker, Docker Compose                 |
-| **雲端平台**           | Fly.io                                 |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
-| **測試框架**           | pytest, pytest-mock, pytest-playwright |
-| **設定管理**           | pydantic-settings                      |
-| **日誌**               | python-json-logger                     |
-| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
-| **依賴項安全**         | pip-audit                              |
+| 類別 | 技術 |
+| --- | --- |
+| **後端框架** | FastAPI, Uvicorn |
+| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic |
+| **背景任務 / 快取** | Dramatiq, Redis (Aiven) |
+| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests |
+| **容器化** | Docker, Docker Compose |
+| **雲端平台** | Fly.io |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff |
+| **測試框架** | pytest, pytest-mock, pytest-playwright |
+| **負載測試** | Locust |
+| **設定管理** | pydantic-settings |
+| **日誌** | python-json-logger |
+| **虛擬顯示** | Xvfb (X virtual framebuffer) |
+| **依賴項安全** | pip-audit |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -115,15 +118,14 @@ cp .env.example .env
 
 接著，請修改 `.env` 檔案的內容。以下是所有必要環境變數的說明：
 
-| 變數名稱              | 說明                                   | 格式範例                                      |
-| --------------------- | -------------------------------------- | --------------------------------------------- |
-| `DATABASE_URL`        | **必要。** 本地開發資料庫的連線字串。  | `postgresql://myuser:mypassword@db:5432/mydb` |
-| `DRAMATIQ_BROKER_URL` | **必要。** 本地開發 Redis 的連線字串。 | `redis://redis:6379/0`                        |
-| `API_KEY`             | **必要。** 用於保護 API 端點的密鑰。   | `your_secret_api_key_here`                    |
-| `TARGET_TEAMS`        | **必要。** 爬蟲要鎖定的球隊名稱列表。  | `["味全龍","中信兄弟"]`                       |
-| `TARGET_PLAYERS`      | **必要。** 爬蟲要鎖定的球員名稱列表。  | `["吉力吉撈．鞏冠","曾頌恩"]`                 |
+| 變數名稱 | 說明 | 格式範例 |
+| --- | --- | --- |
+| `DATABASE_URL` | **必要。** 本地開發資料庫的連線字串。 | `postgresql://myuser:mypassword@db:5432/mydb` |
+| `DRAMATIQ_BROKER_URL` | **必要。** 背景任務佇列 (Broker) 的 Redis 連線字串。 | `redis://redis:6379/0` |
+| `REDIS_CACHE_URL` | **必要。** 應用層快取 (Cache) 的 Redis 連線字串。 | `redis://redis:6379/1` |
+| `API_KEY` | **必要。** 用於保護 API 端點的密鑰。 | `your_secret_api_key_here` |
 
-**重要**: `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式，以確保 Pydantic 在所有環境下都能正確解析。
+**重要**: `fly.toml` 中 `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式（且內部引號需轉義），以確保 Pydantic 能正確解析。
 
 ### 步驟三：啟動並初始化服務
 
@@ -168,7 +170,7 @@ cp .env.example .env
 
 ### 批次匯入歷史數據 (`bulk_import.py`)
 
-(v5.9 更新) 此工具已被完全容器化，用於批次抓取指定日期範圍的歷史比賽數據。**請勿在本地主機直接執行此腳本。**
+此工具已被完全容器化，用於批次抓取指定日期範圍的歷史比賽數據。**請勿在本地主機直接執行此腳本。**
 
 **指令格式:**
 
@@ -244,7 +246,7 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
 
 ## 部署 (Deployment)
 
-### 主要路徑：自動化部署
+### 自動化部署
 
 本專案已設定 CI/CD，任何推送到 `main` 分支且通過所有測試的提交，都會被自動部署到 Fly.io。這是標準的部署流程。
 
@@ -270,7 +272,6 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
    ```bash
    fly deploy
    ```
-
    `flyctl` 會讀取 `fly.toml` 檔案，在本機建置 Docker 映像檔，並將其推送到 Fly.io 平台，更新 `web` 與 `worker` 服務。
 
 ## 本地日誌查看技巧 (Local Log Viewing)
