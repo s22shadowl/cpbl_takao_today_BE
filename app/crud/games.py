@@ -121,6 +121,23 @@ def get_all_schedules(db: Session) -> List[models.GameSchedule]:
         return []
 
 
+# --- ▼▼▼ 新增這個函式 ▼▼▼ ---
+def get_games_by_date(
+    db: Session, target_date: datetime.date
+) -> List[models.GameSchedule]:
+    """
+    根據指定的日期，從資料庫中查詢所有「排程」。
+    """
+    return (
+        db.query(models.GameSchedule)
+        .filter(models.GameSchedule.game_date == target_date)
+        .all()
+    )
+
+
+# --- ▲▲▲ 新增這個函式 ▲▲▲ ---
+
+
 def get_game_with_details(db: Session, game_id: int) -> models.GameResultDB | None:
     """
     使用 joinedload 預先載入關聯資料，獲取單場比賽的完整細節。

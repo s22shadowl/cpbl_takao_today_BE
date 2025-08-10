@@ -1,0 +1,52 @@
+# .github/workflows/daily_crawl.yml
+name: Daily Crawl CI
+
+on:
+  schedule:
+    # 每日 14:00 UTC (台北時間 22:00) 執行。你可以根據需要調整。
+    - cron: "0 14 * * *"
+  # workflow_dispatch 允許你從 GitHub Actions 頁面手動觸發此 workflow
+  workflow_dispatch:
+
+jobs:
+  run-daily-crawl:
+    name: Run Daily Crawler
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install flyctl
+        run: |
+          curl -L https://fly.io/install.sh | sh
+          echo "/home/runner/.fly/bin" >> $GITHUB_PATH
+
+      - name: Start Machines (Web & Worker)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Starting web and worker machines..."
+          fly machine start --app cpbl-takao-today-be --select process=web
+          fly machine start --app cpbl-takao-today-be --select process=worker
+          echo "Waiting 60 seconds for machines to boot..."
+          sleep 60
+
+      - name: Trigger Crawl Task
+        run: |
+          curl -f -s -X POST \
+            -H "X-API-Key: ${{ secrets.API_KEY }}" \
+            https://cpbl-takao-today-be.fly.dev/api/system/trigger-daily-crawl
+
+      - name: Wait for Task Completion
+        run: |
+          # 給予任務固定的執行時間。20 分鐘對於每日爬蟲應該足夠。
+          # 這是未來可以優化的地方 (改為主動監控)。
+          echo "Waiting for 20 minutes (1200s) for the crawl to complete..."
+          sleep 1200
+
+      - name: Stop Machines (Always Run)
+        # `if: always()` 確保無論前面的步驟成功或失敗，關機指令都會被執行，以節省成本。
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Stopping web and worker machines..."
+          fly machine stop --app cpbl-takao-today-be --select process=web
+          fly machine stop --app cpbl-takao-today-be --select process=worker

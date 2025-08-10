@@ -1,9 +1,11 @@
 # tests/test_tasks.py
 
-from unittest.mock import patch, ANY
+from unittest.mock import patch, ANY, MagicMock
 import pytest
 
-# 【修正】直接從函式庫匯入真實的 requests 和 RequestException
+# 修正：從 datetime 模組匯入 datetime 和 date
+from datetime import date, datetime
+
 from requests.exceptions import RequestException
 from app import tasks
 from app.exceptions import RetryableScraperError, FatalScraperError, GameNotFinalError
@@ -13,17 +15,24 @@ from app.config import settings
 @pytest.fixture
 def mock_task_dependencies(monkeypatch):
     """
-    【修正】模擬 tasks 模組的所有外部依賴。
-    修正 patch 的目標路徑，指向被 import 的模組。
+    【修改】模擬 tasks 模組的所有外部依賴。
+    - 修正對 datetime.datetime 的 mock 以正確處理時區。
     """
     mocks = {
         "scraper": patch("app.tasks.scraper").start(),
         "logger": patch("app.tasks.logger").start(),
         "schedule_scraper": patch("app.core.schedule_scraper", create=True).start(),
-        "setup_scheduler": patch("app.scheduler.setup_scheduler", create=True).start(),
-        # 【修正】更精準地模擬 requests.post，以避免替換掉 exceptions 模組
         "requests_post": patch("app.tasks.requests.post").start(),
+        "SessionLocal": patch("app.tasks.SessionLocal").start(),
+        "crud_games": patch("app.tasks.crud_games").start(),
     }
+
+    # 設定 SessionLocal 的 mock 返回值
+    mock_db_session = MagicMock()
+    # 讓 mock 的 session 可以作為 context manager 使用
+    mock_db_session.__enter__.return_value = mock_db_session
+    mocks["SessionLocal"].return_value = mock_db_session
+
     yield mocks
     patch.stopall()
 
@@ -42,6 +51,105 @@ def test_should_retry_returns_true_for_retryable_error():
 def test_should_retry_returns_false_for_non_retryable_errors(exception):
     """測試對於所有非 Retryable 的錯誤，重試判斷函式應回傳 False。"""
     assert tasks.should_retry_scraper_task(0, exception) is False
+
+
+# --- ▼▼▼ 修正: 測試 task_run_daily_crawl ▼▼▼ ---
+
+
+def test_task_run_daily_crawl_triggers_scrape_when_games_found(mock_task_dependencies):
+    """測試當天有比賽時，task_run_daily_crawl 會觸發單日爬蟲任務。"""
+    mock_crud_games = mock_task_dependencies["crud_games"]
+    mock_logger = mock_task_dependencies["logger"]
+
+    # 使用 datetime.date 物件來模擬日期，而不是字串
+    today_date = date.today()
+    mock_today_str = today_date.strftime("%Y-%m-%d")
+
+    # 模擬從資料庫返回一個比賽排程
+    mock_game_schedule = MagicMock()
+    mock_game_schedule.game_id = "G500"
+    mock_game_schedule.game_date = today_date  # 這裡也使用 date 物件
+    mock_game_schedule.game_time = "17:05"
+    mock_game_schedule.matchup = "Team A vs Team B"
+    mock_crud_games.get_games_by_date.return_value = [mock_game_schedule]
+
+    # 模擬 task_scrape_single_day.send
+    with patch("app.tasks.task_scrape_single_day.send") as mock_send:
+        tasks.task_run_daily_crawl()
+
+        # 驗證 get_games_by_date 被呼叫，且日期參數正確
+        mock_crud_games.get_games_by_date.assert_called_once_with(ANY, today_date)
+
+        # 驗證日誌記錄 - 修改為與程式碼動態生成的日誌格式一致
+        mock_logger.info.assert_any_call(
+            f"[Daily Crawl] Executing daily crawl check for {mock_today_str}."
+        )
+        mock_logger.info.assert_any_call(
+            f"[Daily Crawl] Found 1 game(s) for {mock_today_str}. Triggering scrape task."
+        )
+
+        # 驗證 task_scrape_single_day.send 被呼叫，且參數正確
+        expected_date_str = mock_today_str
+        expected_game_data = [
+            {
+                "cpbl_game_id": "G500",
+                "game_date": mock_today_str,
+                "game_time": "17:05",
+                "matchup": "Team A vs Team B",
+            }
+        ]
+        mock_send.assert_called_once_with(expected_date_str, expected_game_data)
+
+
+def test_task_run_daily_crawl_skips_when_no_games_found(mock_task_dependencies):
+    """測試當天沒有比賽時，task_run_daily_crawl 會跳過並記錄日誌。"""
+    mock_crud_games = mock_task_dependencies["crud_games"]
+    mock_logger = mock_task_dependencies["logger"]
+
+    # 模擬資料庫返回空列表
+    mock_crud_games.get_games_by_date.return_value = []
+
+    with patch("app.tasks.task_scrape_single_day.send") as mock_send:
+        tasks.task_run_daily_crawl()
+
+        # 驗證 get_games_by_date 被呼叫，且日期參數正確
+        mock_crud_games.get_games_by_date.assert_called_once_with(ANY, date.today())
+
+        # 驗證日誌記錄
+        mock_logger.info.assert_any_call(
+            f"[Daily Crawl] No games scheduled for {datetime.now().strftime('%Y-%m-%d')}. Skipping."
+        )
+
+        # 驗證爬蟲任務未被呼叫
+        mock_send.assert_not_called()
+
+
+def test_task_run_daily_crawl_logs_error_on_db_exception(mock_task_dependencies):
+    """測試當資料庫查詢發生例外時，task_run_daily_crawl 會記錄錯誤。"""
+    mock_crud_games = mock_task_dependencies["crud_games"]
+    mock_logger = mock_task_dependencies["logger"]
+
+    # 模擬資料庫查詢拋出例外
+    mock_crud_games.get_games_by_date.side_effect = Exception("DB connection failed")
+
+    with patch("app.tasks.task_scrape_single_day.send") as mock_send:
+        tasks.task_run_daily_crawl()
+
+        # 驗證 get_games_by_date 被呼叫，且日期參數正確
+        mock_crud_games.get_games_by_date.assert_called_once_with(ANY, date.today())
+
+        # 驗證錯誤日誌被記錄
+        mock_logger.error.assert_called_once()
+        assert (
+            "An error occurred during daily crawl check"
+            in mock_logger.error.call_args[0][0]
+        )
+
+        # 驗證爬蟲任務未被呼叫
+        mock_send.assert_not_called()
+
+
+# --- ▲▲▲ 修正: 測試 task_run_daily_crawl ▲▲▲ ---
 
 
 # --- 測試 task_scrape_single_day ---
@@ -97,14 +205,12 @@ def test_task_scrape_single_day_logs_and_stops_on_fatal_error(
 def test_task_update_schedule_success(mock_task_dependencies):
     """【修正】測試賽程更新任務的成功路徑。"""
     mock_schedule_scraper = mock_task_dependencies["schedule_scraper"]
-    mock_setup_scheduler = mock_task_dependencies["setup_scheduler"]
 
     tasks.task_update_schedule_and_reschedule()
 
     mock_schedule_scraper.scrape_cpbl_schedule.assert_called_once_with(
         2025, ANY, ANY, include_past_games=True
     )
-    mock_setup_scheduler.assert_called_once()
 
 
 def test_task_update_schedule_propagates_retryable_error(mock_task_dependencies):

@@ -155,6 +155,49 @@ def test_update_and_get_game_schedules(db_session):
     assert schedules_from_db_updated[0].game_id == "180"
 
 
+# --- ▼▼▼ 新增這個測試函式 ▼▼▼ ---
+def test_get_games_by_date(db_session):
+    """測試 get_games_by_date 函式"""
+    db = db_session
+
+    # 準備測試資料
+    schedule1 = models.GameSchedule(
+        game_id="DATE01",
+        game_date=datetime.date(2025, 10, 10),
+        game_time="17:05",
+        matchup="A vs B",
+    )
+    schedule2 = models.GameSchedule(
+        game_id="DATE02",
+        game_date=datetime.date(2025, 10, 10),  # 同一天
+        game_time="18:05",
+        matchup="C vs D",
+    )
+    schedule3 = models.GameSchedule(
+        game_id="DATE03",
+        game_date=datetime.date(2025, 10, 11),  # 不同天
+        game_time="17:05",
+        matchup="E vs F",
+    )
+    db.add_all([schedule1, schedule2, schedule3])
+    db.commit()
+
+    # 執行函式
+    results = games.get_games_by_date(db, datetime.date(2025, 10, 10))
+
+    # 驗證結果
+    assert len(results) == 2
+    # 使用 set 比較可以忽略順序
+    assert {s.game_id for s in results} == {"DATE01", "DATE02"}
+
+    # 測試一個沒有比賽的日期
+    no_game_results = games.get_games_by_date(db, datetime.date(2025, 1, 1))
+    assert len(no_game_results) == 0
+
+
+# --- ▲▲▲ 新增這個測試函式 ▲▲▲ ---
+
+
 def test_get_game_with_details(db_session):
     """測試 get_game_with_details 是否能正確地預先載入所有關聯資料"""
     db = db_session

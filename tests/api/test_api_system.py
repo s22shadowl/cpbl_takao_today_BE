@@ -1,7 +1,7 @@
 # tests/api/test_api_system.py
 
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import fakeredis
 
 from app.config import settings
@@ -107,3 +107,63 @@ def test_clear_cache_integration(client: TestClient):
         assert not fake_redis_instance.exists(expected_cache_key), (
             "快取清除失敗：目標快取鍵仍然存在。"
         )
+
+
+# --- ▼▼▼ 新增: 測試 /api/system/trigger-daily-crawl 端點 ▼▼▼ ---
+
+
+def test_trigger_daily_crawl_unauthorized(client: TestClient):
+    """測試在沒有提供或提供錯誤 API 金鑰時，觸發每日爬蟲端點應回傳 401/422。"""
+    # 情況一：沒有提供 API 金鑰
+    response_no_key = client.post("/api/system/trigger-daily-crawl")
+    assert response_no_key.status_code == 422  # FastAPI 對缺失 Header 的預設回應
+
+    # 情況二：提供錯誤的 API 金鑰
+    response_wrong_key = client.post(
+        "/api/system/trigger-daily-crawl", headers={"X-API-Key": "wrong-key"}
+    )
+    assert response_wrong_key.status_code == 401
+
+
+def test_trigger_daily_crawl_task_success(client: TestClient):
+    """測試成功觸發每日爬蟲任務。"""
+    # 使用 patch 來模擬 task_run_daily_crawl.send 方法
+    with patch("app.api.system.task_run_daily_crawl.send") as mock_send:
+        # 讓 mock 的 send() 方法返回一個帶有 id 屬性的 mock 物件
+        mock_task = MagicMock()
+        mock_task.id = "mock_task_id_123"
+        mock_send.return_value = mock_task
+
+        response = client.post(
+            "/api/system/trigger-daily-crawl", headers={"X-API-Key": settings.API_KEY}
+        )
+
+        # 驗證回應
+        assert response.status_code == 202
+        json_response = response.json()
+        assert json_response["message"] == "Daily crawl task successfully triggered."
+        assert json_response["task_id"] == "mock_task_id_123"
+
+        # 驗證背景任務的 send 方法被呼叫了一次
+        mock_send.assert_called_once()
+
+
+def test_trigger_daily_crawl_task_failure(client: TestClient):
+    """測試當任務入隊失敗時，端點應回傳 500 錯誤。"""
+    with patch("app.api.system.task_run_daily_crawl.send") as mock_send:
+        # 模擬 send() 方法拋出例外
+        mock_send.side_effect = Exception("Broker connection error")
+
+        response = client.post(
+            "/api/system/trigger-daily-crawl", headers={"X-API-Key": settings.API_KEY}
+        )
+
+        # 驗證回應
+        assert response.status_code == 500
+        assert "Failed to enqueue daily crawl task" in response.json()["detail"]
+
+        # 驗證 send 方法被呼叫了
+        mock_send.assert_called_once()
+
+
+# --- ▲▲▲ 新增: 測試 /api/system/trigger-daily-crawl 端點 ▲▲▲ ---

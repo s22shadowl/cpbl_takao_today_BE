@@ -13,6 +13,9 @@ from sqlalchemy import text
 
 from app.db import get_db
 
+# ▼▼▼ 新增這個 import ▼▼▼
+from app.tasks import task_run_daily_crawl
+
 router = APIRouter(
     prefix="/api/system",
     tags=["System"],
@@ -24,19 +27,11 @@ router = APIRouter(
 def health_check(db: Session = Depends(get_db)):
     """
     執行健康檢查。
-
-    這個端點會嘗試連接資料庫並執行一個簡單的查詢，以確認服務本身
-    及其關鍵依賴（資料庫）是否都正常運作。
-
-    - **成功**: 回傳 HTTP 200 OK，表示服務健康。
-    - **失敗**: 回傳 HTTP 503 Service Unavailable，表示服務的依賴項（資料庫）出現問題。
     """
     try:
-        # 執行一個最簡單、成本最低的查詢來驗證資料庫連線
         db.execute(text("SELECT 1"))
         return {"status": "ok", "database": "ok"}
     except Exception as e:
-        # 如果資料庫連線失敗，拋出 503 錯誤
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Database connection error: {e}",
@@ -58,20 +53,15 @@ async def verify_api_key(x_api_key: Annotated[str, Header()]):
 def clear_analysis_cache():
     """
     清除所有由 app.cache 模組產生的快取。
-    此端點應在每日爬蟲任務成功完成後由 Worker 呼叫。
     """
-    # 檢查 redis_client 是否可用
     if not redis_client:
         logging.warning("Redis client 不可用，無法清除快取。")
-        # 即使 Redis 不可用，也回傳成功，因為這不是一個致命錯誤
         return {"message": "Redis client not available. Cache not cleared."}
 
     try:
-        # 我們將清除所有以 "app.api.analysis" 開頭的快取鍵
         cache_key_pattern = "app.api.analysis:*"
         logging.info(f"準備清除快取，使用模式: {cache_key_pattern}")
 
-        # 使用 SCAN 迭代器安全地找出所有匹配的鍵
         keys_to_delete = [
             key for key in redis_client.scan_iter(match=cache_key_pattern)
         ]
@@ -89,3 +79,33 @@ def clear_analysis_cache():
     except Exception as e:
         logging.error(f"清除 Redis 快取時發生錯誤: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to clear cache.")
+
+
+# --- ▼▼▼ 新增這個 API 端點 ▼▼▼ ---
+@router.post(
+    "/trigger-daily-crawl",
+    summary="觸發每日例行爬蟲任務",
+    description="此端點設計給外部排程服務 (如 GitHub Actions) 呼叫，以啟動每日爬蟲的檢查與執行流程。",
+    dependencies=[Depends(verify_api_key)],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def trigger_daily_crawl_task():
+    """
+    將每日爬蟲的進入點任務 `task_run_daily_crawl` 發送到背景佇列。
+    """
+    try:
+        task = task_run_daily_crawl.send()
+        logging.info(f"Daily crawl task triggered with task ID: {task.id}")
+        return {
+            "message": "Daily crawl task successfully triggered.",
+            "task_id": task.id,
+        }
+    except Exception as e:
+        logging.error(f"Failed to trigger daily crawl task: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to enqueue daily crawl task.",
+        )
+
+
+# --- ▲▲▲ 新增這個 API 端點 ▲▲▲ ---
