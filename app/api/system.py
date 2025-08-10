@@ -5,6 +5,9 @@ from typing import Annotated
 
 from fastapi.params import Header
 
+import dramatiq
+from dramatiq.results.errors import ResultMissing
+
 from app.cache import redis_client
 from app.config import settings
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,8 +15,6 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db import get_db
-
-# ▼▼▼ 新增這個 import ▼▼▼
 from app.tasks import task_run_daily_crawl
 
 router = APIRouter(
@@ -81,7 +82,6 @@ def clear_analysis_cache():
         raise HTTPException(status_code=500, detail="Failed to clear cache.")
 
 
-# --- ▼▼▼ 新增這個 API 端點 ▼▼▼ ---
 @router.post(
     "/trigger-daily-crawl",
     summary="觸發每日例行爬蟲任務",
@@ -108,4 +108,44 @@ def trigger_daily_crawl_task():
         )
 
 
-# --- ▲▲▲ 新增這個 API 端點 ▲▲▲ ---
+@router.get(
+    "/task-status/{task_id}",
+    summary="查詢背景任務的執行狀態",
+    description="根據任務 ID 查詢 Dramatiq 任務的狀態。",
+    dependencies=[Depends(verify_api_key)],
+    status_code=status.HTTP_200_OK,
+)
+def get_task_status(task_id: str):
+    """
+    查詢指定 task_id 的執行狀態。
+    可能的狀態: running, succeeded, failed, unknown
+    """
+    broker = dramatiq.get_broker()
+    result_backend = broker.get_result_backend()
+    if not result_backend:
+        raise HTTPException(
+            status_code=501, detail="Result backend is not configured for the broker."
+        )
+
+    try:
+        # ▼▼▼ 修正: 提供 Message 建構函式所需的所有 dummy 參數 ▼▼▼
+        message = dramatiq.Message(
+            queue_name="default",
+            actor_name="unknown",
+            args=(),
+            kwargs={},
+            options={},
+            message_id=task_id,
+        )
+        stored_result = result_backend.get_result(message)
+
+        if isinstance(stored_result, Exception):
+            logging.warning(f"Task {task_id} failed with exception: {stored_result}")
+            return {"task_id": task_id, "status": "failed"}
+
+        return {"task_id": task_id, "status": "succeeded"}
+    except ResultMissing:
+        return {"task_id": task_id, "status": "running"}
+    except Exception as e:
+        logging.error(f"查詢任務狀態時發生錯誤 (ID: {task_id}): {e}", exc_info=True)
+        return {"task_id": task_id, "status": "unknown"}

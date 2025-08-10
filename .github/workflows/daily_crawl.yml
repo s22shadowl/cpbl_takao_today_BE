@@ -28,21 +28,68 @@ jobs:
           echo "Waiting 60 seconds for machines to boot..."
           sleep 60
 
-      - name: Trigger Crawl Task
+      - name: Trigger Crawl Task and Get Task ID
+        id: trigger
         run: |
-          curl -f -s -X POST \
-            -H "X-API-Key: ${{ secrets.API_KEY }}" \
-            https://cpbl-takao-today-be.fly.dev/api/system/trigger-daily-crawl
+          # 請將下面的 your-app-domain.fly.dev 替換為你的 Web 服務的真實網域
+          API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-daily-crawl"
 
-      - name: Wait for Task Completion
+          # 使用 jq 來解析 JSON 回應並獲取 task_id
+          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.API_KEY }}" $API_URL)
+          TASK_ID=$(echo $RESPONSE_JSON | jq -r .task_id)
+
+          echo "Task triggered with ID: $TASK_ID"
+          # 將 task_id 設為後續步驟可用的輸出
+          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+
+      # --- ▼▼▼ 新增/修改: 輪詢監控任務狀態 ▼▼▼ ---
+      - name: Monitor Task Status
+        if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
         run: |
-          # 給予任務固定的執行時間。20 分鐘對於每日爬蟲應該足夠。
-          # 這是未來可以優化的地方 (改為主動監控)。
-          echo "Waiting for 20 minutes (1200s) for the crawl to complete..."
-          sleep 1200
+          TASK_ID=${{ steps.trigger.outputs.task_id }}
+          STATUS_URL="https://cpbl-takao-today-be.fly.dev/api/system/task-status/$TASK_ID"
 
+          # 設定超時時間 (例如 30 分鐘 = 1800 秒)
+          TIMEOUT=1800
+          # 設定輪詢間隔 (30 秒)
+          INTERVAL=30
+          ELAPSED=0
+
+          echo "Monitoring task $TASK_ID..."
+
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.API_KEY }}" $STATUS_URL)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "Error polling status: HTTP $HTTP_CODE. Retrying..."
+            else
+              STATUS=$(echo $BODY | jq -r .status)
+              echo "Current task status: $STATUS (Elapsed: ${ELAPSED}s)"
+
+              if [ "$STATUS" == "succeeded" ]; then
+                echo "Task succeeded!"
+                exit 0
+              elif [ "$STATUS" == "failed" ]; then
+                echo "Task failed!"
+                # 如果希望任務失敗時也讓 workflow 失敗，可以取消下一行的註解
+                # exit 1
+                exit 0 # 目前設定為即使任務失敗，也繼續關機
+              fi
+            fi
+
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "Timeout reached after ${TIMEOUT}s. Assuming task is stuck and proceeding to shutdown."
+          # 如果希望超時也讓 workflow 失敗，可以取消下一行的註解
+          # exit 1
+          exit 0
+      # --- ▲▲▲ 新增/修改: 輪詢監控任務狀態 ▲▲▲ ---
       - name: Stop Machines (Always Run)
-        # `if: always()` 確保無論前面的步驟成功或失敗，關機指令都會被執行，以節省成本。
+        # `if: always()` 確保無論前面步驟成功或失敗，此步驟都會執行，以節省成本。
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

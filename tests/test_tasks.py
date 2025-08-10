@@ -2,9 +2,10 @@
 
 from unittest.mock import patch, ANY, MagicMock
 import pytest
+from freezegun import freeze_time
 
 # 修正：從 datetime 模組匯入 datetime 和 date
-from datetime import date, datetime
+from datetime import date
 
 from requests.exceptions import RequestException
 from app import tasks
@@ -15,8 +16,7 @@ from app.config import settings
 @pytest.fixture
 def mock_task_dependencies(monkeypatch):
     """
-    【修改】模擬 tasks 模組的所有外部依賴。
-    - 修正對 datetime.datetime 的 mock 以正確處理時區。
+    【修正】模擬 tasks 模組的所有外部依賴，確保測試在隔離環境中運行。
     """
     mocks = {
         "scraper": patch("app.tasks.scraper").start(),
@@ -56,6 +56,7 @@ def test_should_retry_returns_false_for_non_retryable_errors(exception):
 # --- ▼▼▼ 修正: 測試 task_run_daily_crawl ▼▼▼ ---
 
 
+@freeze_time("2025-08-11")
 def test_task_run_daily_crawl_triggers_scrape_when_games_found(mock_task_dependencies):
     """測試當天有比賽時，task_run_daily_crawl 會觸發單日爬蟲任務。"""
     mock_crud_games = mock_task_dependencies["crud_games"]
@@ -101,6 +102,7 @@ def test_task_run_daily_crawl_triggers_scrape_when_games_found(mock_task_depende
         mock_send.assert_called_once_with(expected_date_str, expected_game_data)
 
 
+@freeze_time("2025-08-11")
 def test_task_run_daily_crawl_skips_when_no_games_found(mock_task_dependencies):
     """測試當天沒有比賽時，task_run_daily_crawl 會跳過並記錄日誌。"""
     mock_crud_games = mock_task_dependencies["crud_games"]
@@ -116,14 +118,19 @@ def test_task_run_daily_crawl_skips_when_no_games_found(mock_task_dependencies):
         mock_crud_games.get_games_by_date.assert_called_once_with(ANY, date.today())
 
         # 驗證日誌記錄
+        mock_today_str = date.today().strftime("%Y-%m-%d")
         mock_logger.info.assert_any_call(
-            f"[Daily Crawl] No games scheduled for {datetime.now().strftime('%Y-%m-%d')}. Skipping."
+            f"[Daily Crawl] Executing daily crawl check for {mock_today_str}."
+        )
+        mock_logger.info.assert_any_call(
+            f"[Daily Crawl] No games scheduled for {mock_today_str}. Skipping."
         )
 
         # 驗證爬蟲任務未被呼叫
         mock_send.assert_not_called()
 
 
+@freeze_time("2025-08-11")
 def test_task_run_daily_crawl_logs_error_on_db_exception(mock_task_dependencies):
     """測試當資料庫查詢發生例外時，task_run_daily_crawl 會記錄錯誤。"""
     mock_crud_games = mock_task_dependencies["crud_games"]

@@ -3,6 +3,8 @@
 import logging
 import dramatiq
 from dramatiq.brokers.redis import RedisBroker
+from dramatiq.results import Results
+from dramatiq.results.backends.redis import RedisBackend
 from typing import Optional, List, Dict
 import ssl
 import requests
@@ -30,7 +32,13 @@ if broker_url.startswith("rediss://"):
         "socket_timeout": 10,
     }
 
+# 設定 Result Backend
+result_backend = RedisBackend(url=broker_url, **broker_options)
+
+# 設定 Broker，並掛載 Results middleware
 redis_broker = RedisBroker(url=broker_url, **broker_options)
+redis_broker.add_middleware(Results(backend=result_backend))
+
 dramatiq.set_broker(redis_broker)
 
 
