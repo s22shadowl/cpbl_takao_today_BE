@@ -90,9 +90,9 @@ class Settings(BaseSettings):
 
     def get_target_players_as_list(self) -> List[str]:
         """【修正】處理 str 或 list 型別的輸入"""
-        if isinstance(self.TARGET_PLAYERS, list):
-            return self.TARGET_PLAYERS
-        return json.loads(self.TARGET_PLAYERS)
+        if isinstance(self.TARGET_PLAYER_NAMES, list):
+            return self.TARGET_PLAYER_NAMES
+        return json.loads(self.TARGET_PLAYER_NAMES)
 
 
 settings = Settings()
