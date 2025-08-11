@@ -1,14 +1,13 @@
-# reset_db.py
+# scripts/reset_db.py
 #
 # 這個腳本會連接到資料庫，刪除所有由 SQLAlchemy 模型定義的表格，
 # 然後再重新建立它們，以達到清空資料的效果。
 #
 # 使用方法 (在啟用 venv 的 WSL 終端機中):
-# python reset_db.py --yes
+# python -m scripts.reset_db --yes
 
 import logging
 import argparse
-import os
 from dotenv import load_dotenv
 from app.logging_config import setup_logging
 
@@ -23,15 +22,16 @@ def main():
 
     # 步驟 2: 接著載入環境變數，這必須在導入 app.db 之前完成
     logger.info("正在載入 .env 環境變數...")
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
-    if os.path.exists(env_path):
-        load_dotenv(dotenv_path=env_path)
-        logger.info(".env 檔案已成功載入。")
-    else:
+
+    # ▼▼▼ 修改: 直接呼叫 load_dotenv() ▼▼▼
+    # 這會自動從當前工作目錄尋找 .env 檔案，這是執行此類腳本的標準作法。
+    if not load_dotenv():
         logger.error(
-            "錯誤：在專案根目錄下找不到 .env 檔案。無法確定資料庫連線資訊，腳本終止。"
+            "錯誤：在當前目錄下找不到 .env 檔案。請確認您是在專案根目錄下執行此腳本。"
         )
         exit(1)
+    logger.info(".env 檔案已成功載入。")
+    # ▲▲▲ 修改結束 ▲▲▲
 
     # 步驟 3: 現在環境變數已設定，可以安全地導入 app 相關模組
     from app.db import engine, Base
@@ -71,4 +71,4 @@ if __name__ == "__main__":
         # 在執行主要邏輯前，日誌系統可能尚未設定，但此處使用 print 或預設 logger 亦可
         print("警告: 這是一個破壞性操作，將會清空所有資料。")
         print("警告: 請加上 --yes 或 -y 旗標來確認執行。")
-        print("警告: 範例: python reset_db.py --yes")
+        print("警告: 範例: python -m scripts.reset_db --yes")

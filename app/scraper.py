@@ -4,7 +4,6 @@ import datetime
 import time
 import logging
 from playwright.sync_api import sync_playwright, expect
-import re
 from typing import Dict, List, Optional
 
 from app.crud import games, players
@@ -24,7 +23,6 @@ logger = logging.getLogger(__name__)
 
 def scrape_and_store_season_stats():
     """抓取並儲存目標球員的球季累積數據。"""
-    # TODO: 此函式未來也應重構，以支援多球隊數據的抓取
     club_no = settings.TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
     if not club_no:
         logger.error(
@@ -47,6 +45,10 @@ def scrape_and_store_season_stats():
     try:
         players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
+    # [修正] 新增 except 區塊來處理錯誤並回滾
+    except Exception:
+        db.rollback()
+        raise  # 將異常繼續往上拋出，以便上層程式碼能感知到錯誤
     finally:
         if db:
             db.close()
@@ -122,7 +124,7 @@ def _process_filtered_games(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            slow_mo=settings.PLAYWRIGHT_SLOW_MO,
+            slow_mo=0,
             handle_sigint=False,
             handle_sigterm=False,
             handle_sighup=False,
@@ -174,6 +176,13 @@ def _process_filtered_games(
                     "div.InningPlaysGroup", timeout=settings.PLAYWRIGHT_TIMEOUT
                 )
 
+                logger.info("注入 CSS 以隱藏所有 iframe...")
+                try:
+                    page.add_style_tag(content="iframe { display: none !important; }")
+                    logger.debug("CSS 注入成功。")
+                except Exception as e:
+                    logger.error(f"注入 CSS 時發生錯誤: {e}")
+
                 full_game_events = []
                 inning_buttons = page.locator(
                     "div.InningPlaysGroup div.tabs > ul > li"
@@ -182,30 +191,97 @@ def _process_filtered_games(
                 for i, inning_li in enumerate(inning_buttons):
                     inning_num = i + 1
                     logger.info(f"處理第 {inning_num} 局...")
+
                     inning_li.click()
-                    expect(inning_li).to_have_class(re.compile(r"active"))
-                    page.wait_for_timeout(settings.PLAYWRIGHT_STATIC_DELAY)
-                    active_inning_content = page.locator(
-                        "div.InningPlaysGroup div.tab_cont.active"
-                    )
+
+                    try:
+                        active_inning_content = page.locator(
+                            "div.InningPlaysGroup div.tab_cont.active"
+                        )
+                        expect(active_inning_content).to_be_visible(timeout=5000)
+                        logger.debug(f"第 {inning_num} 局內容已可見。")
+                    except Exception as e:
+                        logger.error(
+                            f"等待第 {inning_num} 局內容可見時超時或失敗: {e}，將跳過此局。"
+                        )
+                        continue
 
                     for half_inning_selector in ["section.top", "section.bot"]:
                         half_inning_section = active_inning_content.locator(
                             half_inning_selector
                         )
                         if half_inning_section.count() > 0:
-                            expand_buttons = half_inning_section.locator(
-                                'a[title="展開打擊紀錄"]'
-                            ).all()
-                            logger.info(
-                                f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {len(expand_buttons)} 個打席，準備展開..."
+                            event_containers = half_inning_section.locator(
+                                "div.item.play"
                             )
-                            for button in expand_buttons:
-                                try:
-                                    if button.is_visible(timeout=500):
-                                        button.click(timeout=500)
-                                except Exception:
-                                    pass
+                            container_count = event_containers.count()
+
+                            logger.info(
+                                f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {container_count} 個打席容器，準備展開..."
+                            )
+
+                            for i in range(container_count):
+                                item_container = event_containers.nth(i)
+
+                                bell_button = item_container.locator(
+                                    "div.no-pitch-action-remind"
+                                )
+                                event_button = item_container.locator(
+                                    "div.batter_event"
+                                )
+                                event_anchor = event_button.locator("a")
+
+                                target_to_click = None
+
+                                anchor_text = (
+                                    event_anchor.text_content(timeout=500) or ""
+                                )
+                                if not anchor_text.strip() and bell_button.count() > 0:
+                                    target_to_click = bell_button
+                                    logger.debug(
+                                        f"處理第 {i + 1} 個容器：檢測到無投球事件（鈴鐺）模式。"
+                                    )
+                                else:
+                                    target_to_click = event_button
+                                    logger.debug(
+                                        f"處理第 {i + 1} 個容器：檢測到標準打擊結果按鈕模式。"
+                                    )
+
+                                if not target_to_click:
+                                    logger.warning(
+                                        f"在第 {i + 1} 個容器中找不到任何可點擊的目標按鈕。"
+                                    )
+                                    continue
+
+                                for attempt in range(2):
+                                    try:
+                                        logger.debug(
+                                            f"準備點擊第 {i + 1}/{container_count} 個容器中的按鈕 (嘗試 {attempt + 1})..."
+                                        )
+                                        target_to_click.scroll_into_view_if_needed()
+                                        page.wait_for_timeout(100)
+                                        target_to_click.hover(force=True, timeout=3000)
+                                        page.wait_for_timeout(100)
+                                        target_to_click.click(force=True, timeout=2000)
+                                        logger.debug(f"成功點擊第 {i + 1} 個按鈕。")
+                                        break
+                                    except Exception as e:
+                                        logger.warning(
+                                            f"點擊第 {i + 1} 個按鈕時失敗 (嘗試 {attempt + 1}): {e}",
+                                            exc_info=False,
+                                        )
+                                        if attempt == 1:
+                                            logger.error(
+                                                f"重試多次後，點擊第 {i + 1} 個按鈕仍然失敗。"
+                                            )
+
+                            logger.debug("所有點擊操作完成，開始驗證展開結果...")
+                            num_expanded_details = half_inning_section.locator(
+                                "div.item.play:has(div.detail_item)"
+                            ).count()
+                            logger.info(
+                                f"驗證展開結果：此半局共有 {container_count} 個打席容器，其中 {num_expanded_details} 個已含有詳細內容。"
+                            )
 
                     inning_html = active_inning_content.inner_html()
                     parsed_events = live.parse_active_inning_details(
@@ -307,6 +383,7 @@ def _process_filtered_games(
             finally:
                 if db:
                     db.close()
+        browser.close()
 
 
 # --- 主功能函式 ---
@@ -327,7 +404,6 @@ def scrape_single_day(
         )
         return
 
-    # 【修正】改回呼叫 config 中的輔助函式
     _process_filtered_games(
         games_for_day, target_teams=settings.get_target_teams_as_list()
     )
@@ -364,7 +440,6 @@ def scrape_entire_month(month_str=None):
         for game in all_month_games
         if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date() <= today
     ]
-    # 【修正】改回呼叫 config 中的輔助函式
     _process_filtered_games(
         games_to_process, target_teams=settings.get_target_teams_as_list()
     )
@@ -401,7 +476,6 @@ def scrape_entire_year(year_str=None):
                 if datetime.datetime.strptime(game["game_date"], "%Y-%m-%d").date()
                 <= today
             ]
-            # 【修正】改回呼叫 config 中的輔助函式
             _process_filtered_games(
                 games_to_process, target_teams=settings.get_target_teams_as_list()
             )

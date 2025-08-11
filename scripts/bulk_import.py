@@ -1,4 +1,4 @@
-# bulk_import.py
+# scripts/bulk_import.py
 
 # 新版 bulk_import.py 使用步驟
 # 這個工具現在完全在 Docker 容器內運作，並分為兩個主要步驟。

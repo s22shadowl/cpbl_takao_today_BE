@@ -10,12 +10,12 @@ from .core.constants import HITS, ON_BASE_RESULTS, ADVANCEMENT_RESULTS
 
 class Settings(BaseSettings):
     TEAM_CLUB_CODES: Dict[str, str] = {
-        "味全龍": "ACN",
-        "樂天桃猿": "AAN",
-        "中信兄弟": "ADD",
-        "富邦悍將": "AJJ",
-        "統一7-ELEVEn獅": "AAA",
-        "台鋼雄鷹": "AHA",
+        "中信兄弟": "ACN",
+        "統一7-ELEVEn獅": "ADD",
+        "樂天桃猿": "AJL",
+        "富邦悍將": "AEO",
+        "味全龍": "AAA",
+        "台鋼雄鷹": "AKP",
     }
 
     # **新增**: 從 .env 讀取並驗證 PostgreSQL 的獨立設定變數
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # [新增] 批次匯入腳本專用設定
     STAGING_DATABASE_URL: Optional[str] = None
     PRODUCTION_DATABASE_URL: Optional[str] = None
-    BULK_IMPORT_DELAY_SECONDS: Optional[int] = 5
+    BULK_IMPORT_DELAY_SECONDS: Optional[int] = 2
 
     # [修改] 將爬蟲目標設定的預設值移除，改為由環境變數強制定義
     TARGET_TEAM_NAME: str

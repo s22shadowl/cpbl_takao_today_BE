@@ -51,81 +51,79 @@ def parse_active_inning_details(inning_html_content, inning):
     soup = BeautifulSoup(inning_html_content, "lxml")
     inning_events = []
 
-    event_items = soup.select("div.item.play, div.no-pitch-action-remind")
+    # [修改] 選擇器修正：只選擇打席的主容器，從根本上解決重複計算問題
+    event_items = soup.select("div.item.play")
     for item in event_items:
         try:
+            # [修改] 移除無用的 if/elif 結構，所有 item 都視為一個打席來處理
             event_data = {"inning": inning}
-            if "no-pitch-action-remind" in item.get("class", []):
-                event_data["type"] = "no_pitch_action"
-                event_data["description"] = item.text.strip()
-            elif "play" in item.get("class", []):
-                event_data["type"] = "at_bat"
-                hitter_name_tag = item.select_one("div.player > a > span")
-                desc_tag = item.select_one("div.info > div.desc")
-                if not hitter_name_tag or not desc_tag:
-                    continue
+            event_data["type"] = "at_bat"  # 所有事件都從一個 at_bat 開始解析
 
-                event_data["hitter_name"] = hitter_name_tag.text.strip()
-                description_text = " ".join(desc_tag.stripped_strings)
-                event_data["description"] = re.sub(
-                    r"^\s*第\d+棒\s+[A-Z0-9]+\s+[\u4e00-\u9fa5]+\s*：\s*",
-                    "",
-                    description_text,
-                ).strip()
-                event_data["result_description_full"] = re.sub(
-                    r"^\s*第\d+棒\s+[A-Z0-9]+\s+[\u4e00-\u9fa5]+\s*：\s*",
-                    "",
-                    description_text,
-                ).strip()
+            hitter_name_tag = item.select_one("div.player > a > span")
+            desc_tag = item.select_one("div.info > div.desc")
 
-                result_details = _determine_result_details(
-                    event_data["result_description_full"]
+            if not hitter_name_tag or not desc_tag:
+                logging.warning("跳過一個缺少打者或描述的 item。")
+                continue
+
+            event_data["hitter_name"] = hitter_name_tag.text.strip()
+
+            # 處理描述文字
+            description_text = " ".join(desc_tag.stripped_strings)
+            # 移除描述文字中固定的前綴，例如 "第4棒 DH 魔鷹："
+            clean_desc = re.sub(
+                r"^\s*第\d+棒\s+[A-Z0-9]+\s+[\w\s\.]+\s*：\s*",
+                "",
+                description_text,
+            ).strip()
+            event_data["description"] = clean_desc
+            event_data["result_description_full"] = clean_desc
+
+            # 根據描述判斷打席結果細節
+            result_details = _determine_result_details(
+                event_data["result_description_full"]
+            )
+            event_data.update(result_details)
+
+            # 處理展開後的詳細投球數據
+            pitch_detail_block = item.find("div", class_="detail")
+            if pitch_detail_block:
+                pitcher_name_tag = pitch_detail_block.select_one(
+                    "div.detail_item.pitcher a"
                 )
-                event_data.update(result_details)
+                if pitcher_name_tag:
+                    event_data["opposing_pitcher_name"] = pitcher_name_tag.text.strip()
 
-                pitch_detail_block = item.find("div", class_="detail")
-                if pitch_detail_block:
-                    pitcher_name_tag = pitch_detail_block.select_one(
-                        "div.detail_item.pitcher a"
+                pitch_sequence_tags = pitch_detail_block.select(
+                    "div.detail_item[class*='pitch-'], div.detail_item.no-pitch"
+                )
+                pitch_list = []
+                for tag in pitch_sequence_tags:
+                    pitch_num_tag = tag.select_one("div.pitch_num span")
+                    call_desc_tag = tag.select_one("div.call_desc")
+                    pitches_count_tag = tag.select_one("div.pitches_count")
+                    pitch_list.append(
+                        {
+                            "num": (
+                                pitch_num_tag.text.strip() if pitch_num_tag else None
+                            ),
+                            "desc": (
+                                call_desc_tag.text.strip() if call_desc_tag else None
+                            ),
+                            "count": (
+                                pitches_count_tag.text.strip()
+                                if pitches_count_tag
+                                else None
+                            ),
+                        }
                     )
-                    if pitcher_name_tag:
-                        event_data["opposing_pitcher_name"] = (
-                            pitcher_name_tag.text.strip()
-                        )
-
-                    pitch_sequence_tags = pitch_detail_block.select(
-                        "div.detail_item[class*='pitch-']"
+                if pitch_list:
+                    event_data["pitch_sequence_details"] = json.dumps(
+                        pitch_list, ensure_ascii=False
                     )
-                    pitch_list = []
-                    for tag in pitch_sequence_tags:
-                        pitch_num_tag = tag.select_one("div.pitch_num span")
-                        call_desc_tag = tag.select_one("div.call_desc")
-                        pitches_count_tag = tag.select_one("div.pitches_count")
-                        pitch_list.append(
-                            {
-                                "num": (
-                                    pitch_num_tag.text.strip()
-                                    if pitch_num_tag
-                                    else None
-                                ),
-                                "desc": (
-                                    call_desc_tag.text.strip()
-                                    if call_desc_tag
-                                    else None
-                                ),
-                                "count": (
-                                    pitches_count_tag.text.strip()
-                                    if pitches_count_tag
-                                    else None
-                                ),
-                            }
-                        )
-                    if pitch_list:
-                        event_data["pitch_sequence_details"] = json.dumps(
-                            pitch_list, ensure_ascii=False
-                        )
 
-                inning_events.append(event_data)
+            inning_events.append(event_data)
         except Exception as e:
             logging.error(f"解析單一打席事件時出錯: {e}", exc_info=True)
+
     return inning_events
