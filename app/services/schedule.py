@@ -1,19 +1,16 @@
-# app/core/schedule_scraper.py
+# app/services/schedule.py
 
 import logging
-import json
 from datetime import datetime
 from typing import List, Dict, Optional
 
-from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-# 匯入新的 settings 物件和 SessionLocal
 from app.config import settings
 from app.crud import games
 from app.db import SessionLocal
+from app.browser import get_page  # [重構] 使用統一的 browser manager
 
-# 使用標準方式取得 logger
 logger = logging.getLogger(__name__)
 
 
@@ -28,15 +25,8 @@ def scrape_cpbl_schedule(
     all_games: List[Dict[str, Optional[str]]] = []
     scraped_game_ids = set()
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            handle_sigint=False,
-            handle_sigterm=False,
-            handle_sighup=False,
-        )
-        page = browser.new_page()
-
+    # [重構] 使用統一的 browser manager
+    with get_page(headless=True) as page:
         logger.info(f"正在啟動瀏覽器並前往 {schedule_page_url}...")
         page.goto(schedule_page_url, timeout=60000)
 
@@ -44,7 +34,6 @@ def scrape_cpbl_schedule(
             page.wait_for_selector(".ScheduleSearch .month select", timeout=20000)
         except Exception as e:
             logger.error(f"錯誤：頁面載入超時或找不到關鍵元件。 {e}")
-            browser.close()
             return []
 
         logger.info("頁面載入完成。")
@@ -123,50 +112,33 @@ def scrape_cpbl_schedule(
                     exc_info=True,
                 )
 
-        browser.close()
-        logger.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
+    logger.info(f"\n爬取完成，總共取得 {len(all_games)} 場目標球隊的比賽。")
 
-        games_to_save = all_games
-        if not include_past_games:
-            today = datetime.now().date()
-            original_count = len(all_games)
+    games_to_save = all_games
+    if not include_past_games:
+        today = datetime.now().date()
+        original_count = len(all_games)
 
-            games_to_save = [
-                game
-                for game in all_games
-                if datetime.strptime(game["date"], "%Y-%m-%d").date() >= today
-            ]
+        games_to_save = [
+            game
+            for game in all_games
+            if datetime.strptime(game["date"], "%Y-%m-%d").date() >= today
+        ]
 
-            filtered_count = original_count - len(games_to_save)
-            if filtered_count > 0:
-                logger.info(
-                    f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。"
-                )
+        filtered_count = original_count - len(games_to_save)
+        if filtered_count > 0:
+            logger.info(f"已過濾掉 {filtered_count} 場過去的比賽，將只儲存未來賽程。")
 
-        if games_to_save:
-            db = SessionLocal()
-            try:
-                games.update_game_schedules(db, games_to_save)
-                db.commit()
-                logger.info(f"成功提交 {len(games_to_save)} 筆賽程到資料庫。")
-            except Exception as e:
-                logger.error(f"儲存賽程時發生錯誤，交易已復原: {e}", exc_info=True)
-                db.rollback()
-            finally:
-                db.close()
+    if games_to_save:
+        db = SessionLocal()
+        try:
+            games.update_game_schedules(db, games_to_save)
+            db.commit()
+            logger.info(f"成功提交 {len(games_to_save)} 筆賽程到資料庫。")
+        except Exception as e:
+            logger.error(f"儲存賽程時發生錯誤，交易已復原: {e}", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
 
-        return games_to_save
-
-
-if __name__ == "__main__":
-    TARGET_YEAR = 2025
-    START_MONTH = 3
-    END_MONTH = 10
-
-    schedule_data = scrape_cpbl_schedule(
-        TARGET_YEAR, START_MONTH, END_MONTH, include_past_games=True
-    )
-
-    if schedule_data:
-        print("\n--- 爬取結果 ---")
-        print(json.dumps(schedule_data, indent=2, ensure_ascii=False))
+    return games_to_save

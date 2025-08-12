@@ -1,4 +1,4 @@
-# app/api/tasks.py
+# app/api/jobs.py
 
 import logging
 import datetime
@@ -7,7 +7,9 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.api.dependencies import get_api_key
-from app.tasks import (
+
+# [重構] 從新的 workers 模組匯入 actors
+from app.workers import (
     task_update_schedule_and_reschedule,
     task_scrape_single_day,
     task_scrape_entire_month,
@@ -17,7 +19,7 @@ from app.tasks import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    tags=["Tasks"],
+    tags=["Jobs & Tasks"],
     dependencies=[Depends(get_api_key)],
 )
 

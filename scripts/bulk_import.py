@@ -80,7 +80,7 @@ from sqlalchemy.exc import IntegrityError
 from app.config import settings, Settings
 from app.core import fetcher
 from app.parsers import schedule
-from app.scraper import scrape_single_day, scrape_and_store_season_stats
+from app.services.game_data import scrape_single_day, scrape_and_store_season_stats
 from app.db import Base
 from app.models import (
     GameResultDB,

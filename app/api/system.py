@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db import get_db
-from app.tasks import task_run_daily_crawl
+from app.workers import task_run_daily_crawl
 
 router = APIRouter(
     prefix="/api/system",

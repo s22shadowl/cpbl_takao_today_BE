@@ -1,13 +1,13 @@
-# tests/test_scraper.py
+# tests/test_game_data.py
 
 from unittest.mock import patch, MagicMock, call, ANY
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
 import datetime
 
-from app import scraper
 from app.config import settings
 from app.exceptions import ScraperError
+from app.services import game_data
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def mock_playwright_page(monkeypatch):
     mock_playwright.chromium = mock_chromium
     mock_sync_playwright = MagicMock()
     mock_sync_playwright.__enter__.return_value = mock_playwright
-    monkeypatch.setattr("app.scraper.sync_playwright", lambda: mock_sync_playwright)
+    monkeypatch.setattr("app.browser.sync_playwright", lambda: mock_sync_playwright)
 
     return mock_page
 
@@ -74,27 +74,27 @@ def mock_scraper_dependencies(monkeypatch):
     為 scraper 中的函式模擬所有外部依賴。
     """
     test_settings = settings.model_copy()
-    monkeypatch.setattr("app.scraper.settings", test_settings)
+    monkeypatch.setattr("app.services.game_data.settings", test_settings)
 
-    mock_datetime = patch("app.scraper.datetime").start()
+    mock_datetime = patch("app.services.game_data.datetime").start()
     mock_datetime.datetime.strptime.side_effect = datetime.datetime.strptime
     mock_datetime.date.today.return_value = datetime.date(2025, 8, 11)
 
     mocks = {
-        "fetcher": patch("app.scraper.fetcher").start(),
-        "schedule_parser": patch("app.scraper.schedule").start(),
-        "box_score_parser": patch("app.scraper.box_score").start(),
-        "live_parser": patch("app.scraper.live").start(),
-        "season_stats_parser": patch("app.scraper.season_stats").start(),
-        "players_crud": patch("app.scraper.players").start(),
-        "games_crud": patch("app.scraper.games").start(),
-        "session": patch("app.scraper.SessionLocal").start(),
-        "logger": patch("app.scraper.logger").start(),
-        "time": patch("app.scraper.time").start(),
-        "update_outs": patch("app.scraper._update_outs_count").start(),
-        "update_runners": patch("app.scraper._update_runners_state").start(),
+        "fetcher": patch("app.services.game_data.fetcher").start(),
+        "schedule_parser": patch("app.services.game_data.schedule").start(),
+        "box_score_parser": patch("app.services.game_data.box_score").start(),
+        "live_parser": patch("app.services.game_data.live").start(),
+        "season_stats_parser": patch("app.services.game_data.season_stats").start(),
+        "players_crud": patch("app.services.game_data.players").start(),
+        "games_crud": patch("app.services.game_data.games").start(),
+        "session": patch("app.services.game_data.SessionLocal").start(),
+        "logger": patch("app.services.game_data.logger").start(),
+        "time": patch("app.services.game_data.time").start(),
+        "update_outs": patch("app.services.game_data._update_outs_count").start(),
+        "update_runners": patch("app.services.game_data._update_runners_state").start(),
         "datetime": mock_datetime,
-        "expect": patch("app.scraper.expect").start(),
+        "expect": patch("app.services.game_data.expect").start(),
     }
     yield mocks
     patch.stopall()
@@ -113,7 +113,7 @@ def test_scrape_season_stats_success(mock_scraper_dependencies):
     mock_fetcher.get_dynamic_page_content.return_value = "<html>Stats Page</html>"
     mock_parser.parse_season_stats_page.return_value = [{"player_name": "Player A"}]
 
-    scraper.scrape_and_store_season_stats()
+    game_data.scrape_and_store_season_stats()
 
     mock_players_crud.store_player_season_stats_and_history.assert_called_once_with(
         mock_session_instance, [{"player_name": "Player A"}]
@@ -135,7 +135,7 @@ def test_scrape_season_stats_propagates_db_error(mock_scraper_dependencies):
 
     # 驗證 SQLAlchemyError 是否被正確拋出
     with pytest.raises(SQLAlchemyError, match="DB Error"):
-        scraper.scrape_and_store_season_stats()
+        game_data.scrape_and_store_season_stats()
 
     # 驗證資料庫操作
     mock_session_instance.commit.assert_not_called()
@@ -169,7 +169,7 @@ def test_process_filtered_games_happy_path_full_flow(
     ]
     mock_games_crud.create_game_and_get_id.return_value = 1
 
-    # [修正] 將 mock data 改回 scraper.py 預期的 at_bats_list 結構
+    # [修正] 將 mock data 改回 game_data.py 預期的 at_bats_list 結構
     mock_box_score_parser.parse_box_score_page.return_value = [
         {
             "summary": {
@@ -192,7 +192,7 @@ def test_process_filtered_games_happy_path_full_flow(
     mock_update_outs.return_value = 0
     mock_update_runners.return_value = ["王柏融", None, None]
 
-    scraper._process_filtered_games(
+    game_data._process_filtered_games(
         game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
     )
 
@@ -243,7 +243,7 @@ def test_process_filtered_games_rolls_back_on_error(
     # 模擬儲存資料時發生錯誤
     mock_players_crud.store_player_game_data.side_effect = ValueError("Invalid Data")
 
-    # [修正] 將 mock data 改回 scraper.py 預期的 at_bats_list 結構
+    # [修正] 將 mock data 改回 game_data.py 預期的 at_bats_list 結構
     mock_box_score_parser.parse_box_score_page.return_value = [
         {
             "summary": {"player_name": "王柏融"},
@@ -263,7 +263,7 @@ def test_process_filtered_games_rolls_back_on_error(
     ]
 
     with pytest.raises(ValueError, match="Invalid Data"):
-        scraper._process_filtered_games(
+        game_data._process_filtered_games(
             game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
         )
 
@@ -273,11 +273,11 @@ def test_process_filtered_games_rolls_back_on_error(
 
 def test_process_filtered_games_e2e_mode(mock_scraper_dependencies, monkeypatch):
     """新增：測試當 E2E_TEST_MODE 為 True 時，是否跳過爬蟲直接寫入假資料。"""
-    monkeypatch.setattr(scraper.settings, "E2E_TEST_MODE", True)
+    monkeypatch.setattr(game_data.settings, "E2E_TEST_MODE", True)
     mock_session = mock_scraper_dependencies["session"].return_value
     mock_games_crud = mock_scraper_dependencies["games_crud"]
     mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_playwright_context = patch("app.scraper.sync_playwright").start()
+    mock_playwright_context = patch("app.browser.sync_playwright").start()
 
     game_to_process = [
         {
@@ -288,7 +288,7 @@ def test_process_filtered_games_e2e_mode(mock_scraper_dependencies, monkeypatch)
     ]
     mock_games_crud.create_game_and_get_id.return_value = 99
 
-    scraper._process_filtered_games(game_to_process)
+    game_data._process_filtered_games(game_to_process)
 
     mock_playwright_context.assert_not_called()
     mock_players_crud.store_player_game_data.assert_called_once_with(
@@ -308,7 +308,7 @@ def test_scrape_entire_year_skips_month_on_scraper_error(
     mock_fetcher = mock_scraper_dependencies["fetcher"]
     mock_logger = mock_scraper_dependencies["logger"]
     mock_schedule_parser = mock_scraper_dependencies["schedule_parser"]
-    mock_process_games = patch("app.scraper._process_filtered_games").start()
+    mock_process_games = patch("app.services.game_data._process_filtered_games").start()
 
     mock_datetime = mock_scraper_dependencies["datetime"]
 
@@ -328,7 +328,7 @@ def test_scrape_entire_year_skips_month_on_scraper_error(
     monkeypatch.setattr(settings, "CPBL_SEASON_START_MONTH", 3)
     monkeypatch.setattr(settings, "CPBL_SEASON_END_MONTH", 11)
 
-    scraper.scrape_entire_year(year_str="2025")
+    game_data.scrape_entire_year(year_str="2025")
 
     assert mock_fetcher.fetch_schedule_page.call_count == 3
     mock_logger.error.assert_called_once_with(
@@ -344,15 +344,15 @@ def test_scrape_entire_year_skips_month_on_scraper_error(
 
 def test_scrape_single_day_flow(mock_scraper_dependencies):
     """測試 scrape_single_day 是否使用傳入的參數正確呼叫 _process_filtered_games。"""
-    mock_process_games = patch("app.scraper._process_filtered_games").start()
+    mock_process_games = patch("app.services.game_data._process_filtered_games").start()
     mock_scrape_season_stats = patch(
-        "app.scraper.scrape_and_store_season_stats"
+        "app.services.game_data.scrape_and_store_season_stats"
     ).start()
 
     target_date = "2025-06-25"
     games_for_the_day = [{"game_date": target_date, "cpbl_game_id": "G2"}]
 
-    scraper.scrape_single_day(
+    game_data.scrape_single_day(
         specific_date=target_date,
         games_for_day=games_for_the_day,
         update_season_stats=False,

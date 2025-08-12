@@ -1,4 +1,4 @@
-# app/tasks.py
+# app/workers.py
 
 import logging
 import dramatiq
@@ -10,14 +10,15 @@ import ssl
 import requests
 from datetime import datetime
 import pytz
+
 from app.db import SessionLocal
 from app.crud import games as crud_games
 from app.core import fetcher
 from app.parsers import schedule
-
 from app.config import settings
-from app import scraper
 
+# [重構] 匯入新的 services 模組
+from app.services import game_data, schedule as schedule_service
 from app.exceptions import RetryableScraperError, FatalScraperError, GameNotFinalError
 
 logger = logging.getLogger(__name__)
@@ -114,11 +115,10 @@ def task_run_daily_crawl():
 )
 def task_update_schedule_and_reschedule():
     """背景任務，負責執行完整的賽程更新。"""
-    from app.core import schedule_scraper
-
     logger.info("--- Dramatiq Worker: 已接收到賽程更新任務，開始執行 ---")
     try:
-        schedule_scraper.scrape_cpbl_schedule(
+        # [重構] 使用新的 service 函式
+        schedule_service.scrape_cpbl_schedule(
             datetime.now().year,
             settings.CPBL_SEASON_START_MONTH,
             settings.CPBL_SEASON_END_MONTH,
@@ -158,7 +158,6 @@ def task_scrape_single_day(
     logger.info(f"--- Dramatiq Worker: 執行單日爬蟲任務 for {target_date_str} ---")
 
     try:
-        # [修改] 如果未提供當日賽程，則自行從網路抓取
         if games_for_day is None:
             logger.info(f"未提供賽程列表，為日期 {target_date_str} 執行線上抓取...")
             html_content = fetcher.fetch_schedule_page(
@@ -175,7 +174,8 @@ def task_scrape_single_day(
                 game for game in all_month_games if game["game_date"] == target_date_str
             ]
 
-        scraper.scrape_single_day(target_date_str, games_for_day)
+        # [重構] 使用新的 service 函式
+        game_data.scrape_single_day(target_date_str, games_for_day)
         _trigger_cache_clear()
         logger.info(
             f"--- Dramatiq Worker: 單日爬蟲任務 for {target_date_str} 執行完畢 ---"
@@ -196,7 +196,8 @@ def task_scrape_entire_month(month_str: Optional[str] = None):
     """抓取整月比賽數據的任務。"""
     logger.info(f"--- Dramatiq Worker: 執行逐月爬蟲任務 for {month_str or '本月'} ---")
     try:
-        scraper.scrape_entire_month(month_str)
+        # [重構] 使用新的 service 函式
+        game_data.scrape_entire_month(month_str)
         _trigger_cache_clear()
         logger.info(
             f"--- Dramatiq Worker: 逐月爬蟲任務 for {month_str or '本月'} 執行完畢 ---"
@@ -212,7 +213,8 @@ def task_scrape_entire_year(year_str: Optional[str] = None):
     """抓取全年比賽數據的任務。"""
     logger.info(f"--- Dramatiq Worker: 執行逐年爬蟲任務 for {year_str or '今年'} ---")
     try:
-        scraper.scrape_entire_year(year_str)
+        # [重構] 使用新的 service 函式
+        game_data.scrape_entire_year(year_str)
         _trigger_cache_clear()
         logger.info(
             f"--- Dramatiq Worker: 逐年爬蟲任務 for {year_str or '今年'} 執行完畢 ---"

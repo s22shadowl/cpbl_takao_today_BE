@@ -1,9 +1,9 @@
-# app/scraper.py
+# app/services/game_data.py
 
 import datetime
 import time
 import logging
-from playwright.sync_api import sync_playwright, expect
+from playwright.sync_api import expect
 from typing import Dict, List, Optional
 
 from app.crud import games, players
@@ -14,6 +14,7 @@ from app.core import fetcher
 from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
 from app.exceptions import ScraperError
+from app.browser import get_page  # [重構] 使用統一的 browser manager
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +46,9 @@ def scrape_and_store_season_stats():
     try:
         players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
-    # [修正] 新增 except 區塊來處理錯誤並回滾
     except Exception:
         db.rollback()
-        raise  # 將異常繼續往上拋出，以便上層程式碼能感知到錯誤
+        raise
     finally:
         if db:
             db.close()
@@ -121,15 +121,8 @@ def _process_filtered_games(
                 db.close()
         return
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            slow_mo=0,
-            handle_sigint=False,
-            handle_sigterm=False,
-            handle_sighup=False,
-        )
-        page = browser.new_page()
+    # [重構] 使用統一的 browser manager，並設定 headless=False
+    with get_page(headless=False) as page:
         for game_info in games_to_process:
             db = SessionLocal()
             try:
@@ -383,7 +376,6 @@ def _process_filtered_games(
             finally:
                 if db:
                     db.close()
-        browser.close()
 
 
 # --- 主功能函式 ---

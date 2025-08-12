@@ -37,7 +37,7 @@
 
 - **Fly App (`cpbl-takao-today-be`)**: 專案的主應用程式容器。
   - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求。
-  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行爬蟲任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器。
+  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行由 `app/workers.py` 中定義的背景任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器。
 - **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務。
 - **Aiven Redis**: 作為外部第三方服務，同時肩負兩種職責：
   - **訊息代理 (Broker)**: 供 Dramatiq 使用 (db0)。
@@ -83,19 +83,19 @@ graph TD
 
 | 類別                   | 技術                                   |
 | ---------------------- | -------------------------------------- |
-| **後端框架**           | FastAPI, Uvicorn                       |
-| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
-| **背景任務 / 快取**    | Dramatiq, Redis (Aiven)                |
-| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
-| **容器化**             | Docker, Docker Compose                 |
-| **雲端平台**           | Fly.io                                 |
+| **後端框架** | FastAPI, Uvicorn                       |
+| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic  |
+| **背景任務 / 快取** | Dramatiq, Redis (Aiven)                |
+| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests   |
+| **容器化** | Docker, Docker Compose                 |
+| **雲端平台** | Fly.io                                 |
 | **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
-| **測試框架**           | pytest, pytest-mock, pytest-playwright |
-| **負載測試**           | Locust                                 |
-| **設定管理**           | pydantic-settings                      |
-| **日誌**               | python-json-logger                     |
-| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
-| **依賴項安全**         | pip-audit                              |
+| **測試框架** | pytest, pytest-mock, pytest-playwright |
+| **負載測試** | Locust                                 |
+| **設定管理** | pydantic-settings                      |
+| **日誌** | python-json-logger                     |
+| **虛擬顯示** | Xvfb (X virtual framebuffer)           |
+| **依賴項安全** | pip-audit                              |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -131,28 +131,28 @@ cp .env.example .env
 
 本專案使用 Docker Compose 管理所有服務。
 
-1. **啟動所有服務容器**:
+1.  **啟動所有服務容器**:
 
-   ```bash
-   # 首次啟動或 Dockerfile/docker-compose.yml 變更後，使用 --build
-   docker compose up -d --build
-   ```
+    ```bash
+    # 首次啟動或 Dockerfile/docker-compose.yml 變更後，使用 --build
+    docker compose up -d --build
+    ```
 
-2. **初始化資料庫 (僅首次設定必要)**:
-   在新啟動的 `web` 容器中，使用 Alembic 建立所有必要的資料表。
+2.  **初始化資料庫 (僅首次設定必要)**:
+    在新啟動的 `web` 容器中，使用 Alembic 建立所有必要的資料表。
 
-   ```bash
-   # 在 web 容器中執行 alembic upgrade 指令
-   docker compose run --rm web alembic upgrade head
-   ```
+    ```bash
+    # 在 web 容器中執行 alembic upgrade 指令
+    docker compose run --rm web alembic upgrade head
+    ```
 
-3. **首次初始化賽程**:
-   使用 `curl` 或任何 API 測試工具，向以下端點發送一個 POST 請求。這會觸發背景任務，抓取整年度的賽程。
+3.  **首次初始化賽程**:
+    使用 `curl` 或任何 API 測試工具，向以下端點發送一個 POST 請求。這會觸發背景任務，抓取整年度的賽程。
 
-   ```bash
-   curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule) \
-   -H "X-API-Key: your_secret_api_key_here"
-   ```
+    ```bash
+    curl -X POST [http://127.0.0.1:8000/api/update_schedule](http://127.0.0.1:8000/api/update_schedule) \
+    -H "X-API-Key: your_secret_api_key_here"
+    ```
 
 ## API 端點 (API Endpoints)
 

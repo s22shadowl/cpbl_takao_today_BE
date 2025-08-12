@@ -1,4 +1,4 @@
-# tests/api/test_api_tasks.py
+# tests/api/test_api_jobs.py
 
 import pytest
 from fastapi.testclient import TestClient
@@ -39,11 +39,11 @@ def authenticated_client(client: TestClient):
 @pytest.mark.parametrize(
     "mode, date_param, expected_task_str",
     [
-        # [修正] patch 的目標應為任務被 '使用' 的地方 (app.api.tasks)，
-        # 而非其被 '定義' 的地方 (app.tasks)。
-        ("daily", "2025-06-21", "app.api.tasks.task_scrape_single_day"),
-        ("monthly", "2025-06", "app.api.tasks.task_scrape_entire_month"),
-        ("yearly", "2025", "app.api.tasks.task_scrape_entire_year"),
+        # [修正] patch 的目標應為任務被 '使用' 的地方 (app.api.jobs)，
+        # 而非其被 '定義' 的地方 (app.jobs)。
+        ("daily", "2025-06-21", "app.api.jobs.task_scrape_single_day"),
+        ("monthly", "2025-06", "app.api.jobs.task_scrape_entire_month"),
+        ("yearly", "2025", "app.api.jobs.task_scrape_entire_year"),
     ],
 )
 def test_run_scraper_manually(
@@ -79,8 +79,8 @@ def test_run_scraper_manually_invalid_date_format(authenticated_client: TestClie
 
 def test_update_schedule_manually(authenticated_client: TestClient, mocker):
     """測試 /api/update_schedule 端點能成功觸發任務。"""
-    # [修正] 同樣地，patch 的目標應為任務被 '使用' 的地方 (app.api.tasks)。
-    mock_task = mocker.patch("app.api.tasks.task_update_schedule_and_reschedule")
+    # [修正] 同樣地，patch 的目標應為任務被 '使用' 的地方 (app.api.jobs)。
+    mock_task = mocker.patch("app.api.jobs.task_update_schedule_and_reschedule")
     response = authenticated_client.post("/api/update_schedule")
     assert response.status_code == 202
     mock_task.send.assert_called_once()
