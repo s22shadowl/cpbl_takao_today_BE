@@ -315,8 +315,10 @@ def test_get_situational_at_bats(client: TestClient, db_session: Session):
     assert data_sp[0]["result_short"] == "滿貫砲"  # 倒序，所以先拿到滿貫砲
 
 
-def test_get_streaks_by_player_names(client: TestClient, setup_streak_test_data):
-    """測試使用 player_names 參數查詢特定連續球員的連線。"""
+def test_get_streaks_by_specific_player_names(
+    client: TestClient, setup_streak_test_data
+):
+    """測試使用 player_names 參數查詢特定且存在的連續球員連線。"""
     response = client.get(
         "/api/analysis/streaks?player_names=球員A&player_names=球員B&player_names=球員C"
     )
@@ -326,13 +328,17 @@ def test_get_streaks_by_player_names(client: TestClient, setup_streak_test_data)
     streak = data[0]
     assert streak["streak_length"] == 3
     assert streak["at_bats"][0]["player_name"] == "球員A"
+    assert streak["at_bats"][1]["player_name"] == "球員B"
+    assert streak["at_bats"][2]["player_name"] == "球員C"
 
-    # 查詢一個不存在的連線
-    response_none = client.get(
-        "/api/analysis/streaks?player_names=球員A&player_names=球員C"
-    )
-    assert response_none.status_code == 200
-    assert response_none.json() == []
+
+def test_get_streaks_with_non_existent_combo(
+    client: TestClient, setup_streak_test_data
+):
+    """測試查詢一個不存在的球員組合連線，應回傳空列表。"""
+    response = client.get("/api/analysis/streaks?player_names=球員A&player_names=球員C")
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_get_streaks_with_different_definition(
