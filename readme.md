@@ -2,7 +2,7 @@
 
 ## 專案總覽 (Project Overview)
 
-本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務，旨在提供一個通用、穩健且可擴展的數據平台。它採用容器化技術（Docker）封裝，並已成功部署至 Fly.io 雲端平台，且與 GitHub Actions 整合，實現了推送即部署的 CI/CD 流程。
+本專案是一個用於抓取中華職棒（CPBL）官方網站數據的後端服務，旨在提供一個通用、穩健且可擴展的數據平台。它採用容器化技術（Docker）封裝，並已成功部署至 Fly.io 雲端平台，且與 GitHub Actions 整合，實現了推送即部署的 CI/CD 流程與成本優化的自動化排程。
 
 服務核心功能是自動化爬取比賽賽程、逐場比賽的詳細攻守數據（包含所有球員的逐打席紀錄），以及球員的球季數據歷史。架構上，採用非同步任務佇列（Dramatiq + Redis）來處理耗時的爬蟲任務，並透過一個受 API 金鑰保護的 RESTful API 提供從基本查詢到複雜情境分析的多種數據需求。
 
@@ -18,35 +18,26 @@
 - **雲端原生架構**: 部署於 Fly.io，將 API (`web`) 與爬蟲 (`worker`) 拆分為獨立服務，並整合 `Xvfb` 繞過反爬蟲機制。
 - **自動化品質與安全**: 整合 pre-commit (Ruff) 與 GitHub Actions CI/CD 流程，並透過 `pip-audit` 進行依賴項安全掃描。
 
-## 維運與韌性 (Operations & Resilience)
-
-- **服務健康監控與自癒**: 內建 `/api/system/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
-- **智慧重試機制**: 背景任務能自動從可恢復的網路錯誤中恢復，並區分可重試與致命錯誤，避免佇列阻塞。
-- **冪等性爬蟲**: 每日爬蟲任務採用「先刪除後新增」策略，確保重複執行不會造成資料重複或不一致。
-- **結構化日誌與追蹤**: 所有日誌均為 JSON 格式，並為每個請求注入 `request_id`，大幅簡化問題排查。
-
-## 效能優化 (Performance Optimizations)
-
-- **負載測試**: 整合 `Locust` 框架建立 API 效能基準，以科學方法識別瓶頸。
-- **資料庫反正規化**: 透過在 `at_bat_details` 表中新增 `game_id` 欄位，並建立複合索引，從根本上解決了昂貴的跨表 JOIN 排序問題。
-- **應用層快取**: 利用 Redis 為高成本的分析型 API 端點提供快取，並建立由 Worker 觸發的自動化快取失效機制，確保資料一致性。
-
 ## 生產環境架構 (Production Architecture)
 
 本專案在 Fly.io 上的生產環境由以下幾個核心元件組成：
 
 - **Fly App (`cpbl-takao-today-be`)**: 專案的主應用程式容器。
-  - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求。
-  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行由 `app/workers.py` 中定義的背景任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器。
+  - **Web Service (`web`)**: 運行 FastAPI 的 Uvicorn 伺服器，負責接收所有 API 請求，並將耗時任務發送至佇列。
+  - **Worker Service (`worker`)**: 運行 Dramatiq Worker，專門執行由 `app/workers.py` 中定義的背景任務。它在 `Xvfb` 虛擬顯示環境中運行，使其能以 `headless=False` 模式操作瀏覽器，應對複雜的網站反爬蟲機制。
 - **Fly PostgreSQL**: 由 Fly.io 管理的獨立 PostgreSQL 資料庫服務。
 - **Aiven Redis**: 作為外部第三方服務，同時肩負兩種職責：
-  - **訊息代理 (Broker)**: 供 Dramatiq 使用 (db0)。
-  - **應用層快取 (Cache)**: 供 Web 服務使用 (db1)。
+  - **訊息代理 (Broker)**: 供 Dramatiq 使用 (db0)，並啟用 Result Backend 以支援任務狀態查詢。
+  - **應用層快取 (Cache)**: 供 Web 服務使用 (db1)，實現操作隔離。
 
 ```mermaid
 graph TD
     subgraph "使用者"
         Client[外部客戶端 / 前端]
+    end
+
+    subgraph "GitHub Actions"
+        GHA{daily_crawl.yml}
     end
 
     subgraph "Fly.io 雲端平台"
@@ -65,19 +56,56 @@ graph TD
         CPBL[CPBL 官網]
     end
 
-    Client -- "API 請求 (HTTPS)" --> Web
-    Web -- "1. 資料庫查詢" --> DB
-    Web -- "2. 快取讀寫" --> Redis
-    DB -- "3. 回傳資料" --> Web
-    Redis -- "4. 回傳快取" --> Web
-    Web -- "5. 回應資料" --> Client
+    GHA -- "1. 定時啟動機器" --> Web
+    GHA -- "1. 定時啟動機器" --> Worker
+    GHA -- "2. 觸發每日爬蟲 API" --> Web
+    GHA -- "4. 輪詢任務狀態" --> Web
+    GHA -- "6. 關閉機器" --> Web
+    GHA -- "6. 關閉機器" --> Worker
 
-    Web -- "A. 發送背景任務" --> Redis
-    Redis -- "B. 任務入隊" --> Worker
-    Worker -- "C. 執行爬蟲" --> CPBL
-    Worker -- "D. 將結果寫入資料庫" --> DB
-    Worker -- "E. 清除快取" --> Web
+    Client -- "API 請求 (HTTPS)" --> Web
+    Web -- "資料庫查詢" --> DB
+    Web -- "快取讀寫" --> Redis
+    Web -- "3. 發送背景任務" --> Redis
+    Redis -- "任務入隊" --> Worker
+    Worker -- "5. 執行爬蟲" --> CPBL
+    Worker -- "將結果寫入資料庫" --> DB
+    Worker -- "清除快取(可選)" --> Web
 ```
+
+## 自動化排程與成本優化 (Automation & Cost Optimization)
+
+為了解決傳統排程器依賴服務常駐運行的問題，本專案已將排程的觸發與控制權完全轉移至 GitHub Actions，實現了按需啟停 (Scale-to-zero) 的架構，大幅降低維運成本。
+
+核心工作流程 (`.github/workflows/daily_crawl.yml`) 如下：
+
+1.  **定時啟動**: 每日固定時間，workflow 自動執行 `fly machines start` 指令，啟動 `web` 與 `worker` 機器。
+2.  **觸發任務**: 機器啟動後，workflow 會呼叫 `POST /api/system/trigger-daily-crawl` 端點，將每日爬蟲任務送入 Dramatiq 佇列並取得 `task_id`。
+3.  **主動監控**: 接著，workflow 會進入輪詢階段，週期性地呼叫 `GET /api/system/task-status/{task_id}` 端點，主動監控任務的真實執行狀態 (`succeeded`, `failed`)。
+4.  **即時關閉**: 一旦任務完成（無論成功或失敗），workflow 會立刻執行 `fly machines stop` 指令關閉機器，確保運算資源只在必要時運行。
+
+此架構不僅提升了排程的健壯性，更透過精準的按需控制，將服務的每日運行時間從 24 小時縮減至約 30 分鐘。
+
+### 本地測試指南
+
+若需在本地開發環境測試此流程，可依序手動模擬 GHA 的行為：
+1.  啟動本地服務: `docker compose up -d`
+2.  手動觸發任務: `curl -X POST http://127.0.0.1:8000/api/system/trigger-daily-crawl -H "X-API-Key: your_secret_api_key_here"`，並記下回傳的 `task_id`。
+3.  手動查詢狀態: `curl http://127.0.0.1:8000/api/system/task-status/{your_task_id} -H "X-API-Key: your_secret_api_key_here"`。
+4.  觀察日誌: `docker compose logs -f worker` 查看爬蟲執行狀況。
+
+## 維運與韌性 (Operations & Resilience)
+
+- **服務健康監控與自癒**: 內建 `/api/system/health` 端點，整合 Fly.io 實現服務自癒與外部告警。
+- **智慧重試機制**: 背景任務能自動從可恢復的網路錯誤中恢復，並區分可重試與致命錯誤，避免佇列阻塞。
+- **冪等性爬蟲**: 每日爬蟲任務採用「先刪除後新增」策略，確保重複執行不會造成資料重複或不一致。
+- **結構化日誌與追蹤**: 所有日誌均為 JSON 格式，並為每個請求注入 `request_id`，大幅簡化問題排查。
+
+## 效能優化 (Performance Optimizations)
+
+- **負載測試**: 整合 `Locust` 框架建立 API 效能基準，以科學方法識別瓶頸。
+- **資料庫反正規化**: 透過在 `at_bat_details` 表中新增 `game_id` 欄位，並建立複合索引，從根本上解決了昂貴的跨表 JOIN 排序問題。
+- **應用層快取**: 利用 Redis 為高成本的分析型 API 端點提供快取，並建立由 Worker 觸發的自動化快取失效機制，確保資料一致性。
 
 ## 技術棧 (Tech Stack)
 
@@ -108,7 +136,7 @@ git clone <YOUR_REPOSITORY_URL>
 cd <PROJECT_DIRECTORY>
 ```
 
-### 步驟二：設定環境變數 (`.env`)
+### 步驟二：設定環境變數
 
 本專案透過 `.env` 檔案管理本地開發環境的設定。請從範例檔案複製一份來開始：
 
@@ -116,14 +144,20 @@ cd <PROJECT_DIRECTORY>
 cp .env.example .env
 ```
 
-接著，請修改 `.env` 檔案的內容。以下是所有必要環境變數的說明：
+接著，請修改 `.env` 檔案的內容。所有必要的環境變數都定義在 `app/config.py` 中，並透過 Pydantic 進行驗證。
 
-| 變數名稱              | 說明                                                 | 格式範例                                      |
-| --------------------- | ---------------------------------------------------- | --------------------------------------------- |
-| `DATABASE_URL`        | **必要。** 本地開發資料庫的連線字串。                | `postgresql://myuser:mypassword@db:5432/mydb` |
-| `DRAMATIQ_BROKER_URL` | **必要。** 背景任務佇列 (Broker) 的 Redis 連線字串。 | `redis://redis:6379/0`                        |
-| `REDIS_CACHE_URL`     | **必要。** 應用層快取 (Cache) 的 Redis 連線字串。    | `redis://redis:6379/1`                        |
-| `API_KEY`             | **必要。** 用於保護 API 端點的密鑰。                 | `your_secret_api_key_here`                    |
+#### 組態管理原則 (Configuration Management Principles)
+
+本專案的組態管理遵循職責分離原則：
+
+- **敏感資訊 (Secrets)**: 如 `DATABASE_URL`, `API_KEY` 等。這類資訊**絕不**能提交至版本控制。
+  - **生產環境**: 由 Fly.io 的 Secrets 功能管理 (`fly secrets set`)。
+  - **CI/CD 流程**: 由 GitHub Actions 的 Secrets 提供。
+  - **本地開發**: 存放於 `.env` 檔案中 (此檔案已被 `.gitignore` 排除)。
+
+- **非敏感組態 (Configuration)**: 如 `TARGET_TEAMS` 等應用層面的設定。這類資訊應受版本控制。
+  - **生產環境**: 定義於 `fly.toml` 的 `[env]` 區塊中。
+  - **本地開發**: 同樣存放於 `.env` 檔案中，方便覆寫與測試。
 
 **重要**: `fly.toml` 中 `TARGET_TEAMS` 和 `TARGET_PLAYERS` 這類列表型別的變數，**必須**使用標準的 JSON 陣列字串格式（且內部引號需轉義），以確保 Pydantic 能正確解析。
 
