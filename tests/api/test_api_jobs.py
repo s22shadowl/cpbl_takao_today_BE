@@ -6,11 +6,7 @@ from fastapi.testclient import TestClient
 from app.api.dependencies import get_api_key
 from app.main import app
 from app.config import settings
-
-
-# [移除] 不再需要 mock dramatiq broker。
-# 透過直接 mock 任務物件的 send 方法，我們將能完全避免觸發與 Redis 的實際連接，
-# 這是更精準且可靠的單元測試方法。
+from app.exceptions import APIErrorCode
 
 
 @pytest.fixture
@@ -39,8 +35,6 @@ def authenticated_client(client: TestClient):
 @pytest.mark.parametrize(
     "mode, date_param, expected_task_str",
     [
-        # [修正] patch 的目標應為任務被 '使用' 的地方 (app.api.jobs)，
-        # 而非其被 '定義' 的地方 (app.jobs)。
         ("daily", "2025-06-21", "app.api.jobs.task_scrape_single_day"),
         ("monthly", "2025-06", "app.api.jobs.task_scrape_entire_month"),
         ("yearly", "2025", "app.api.jobs.task_scrape_entire_year"),
@@ -58,8 +52,6 @@ def test_run_scraper_manually(
     response = authenticated_client.post("/api/run_scraper", json=request_payload)
 
     assert response.status_code == 202
-
-    # [修正] 簡化重複的斷言。無論模式為何，預期行為都是一致的。
     mock_task.send.assert_called_once_with(date_param)
 
 
@@ -68,18 +60,25 @@ def test_run_scraper_manually_invalid_mode(authenticated_client: TestClient):
     request_payload = {"mode": "invalid_mode", "date": None}
     response = authenticated_client.post("/api/run_scraper", json=request_payload)
     assert response.status_code == 400
+    # [新增] 驗證新的錯誤回應格式
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.INVALID_INPUT.value
+    assert "Invalid mode" in json_response["message"]
 
 
 def test_run_scraper_manually_invalid_date_format(authenticated_client: TestClient):
-    """測試當 daily 模式傳入無效日期格式時，應回傳 422 錯誤。"""
+    """測試當 daily 模式傳入無效日期格式時，應回傳 400 錯誤。"""
     request_payload = {"mode": "daily", "date": "2025-13-01"}
     response = authenticated_client.post("/api/run_scraper", json=request_payload)
-    assert response.status_code == 422
+    # [修改] 驗證新的錯誤狀態碼與回應格式
+    assert response.status_code == 400
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.INVALID_INPUT.value
+    assert "Invalid date format" in json_response["message"]
 
 
 def test_update_schedule_manually(authenticated_client: TestClient, mocker):
     """測試 /api/update_schedule 端點能成功觸發任務。"""
-    # [修正] 同樣地，patch 的目標應為任務被 '使用' 的地方 (app.api.jobs)。
     mock_task = mocker.patch("app.api.jobs.task_update_schedule_and_reschedule")
     response = authenticated_client.post("/api/update_schedule")
     assert response.status_code == 202
@@ -90,22 +89,17 @@ def test_update_schedule_manually(authenticated_client: TestClient, mocker):
 
 
 def test_post_endpoints_unauthorized(client: TestClient):
-    """測試在沒有提供或提供錯誤 API 金鑰時，所有 POST 端點應回傳 403。"""
-    # 案例 1: 沒有提供 API Key
-    response_run = client.post(
-        "/api/run_scraper", json={"mode": "daily", "date": "2025-01-01"}
-    )
-    assert response_run.status_code == 403
-    response_update = client.post("/api/update_schedule")
-    assert response_update.status_code == 403
-
-    # 案例 2: 提供錯誤的 API Key
+    """測試在提供錯誤 API 金鑰時，所有 POST 端點應回傳 401。"""
     headers = {"X-API-Key": "wrong-key"}
     response_run_wrong = client.post(
         "/api/run_scraper",
         headers=headers,
         json={"mode": "daily", "date": "2025-01-01"},
     )
-    assert response_run_wrong.status_code == 403
+    # [修改] 驗證新的錯誤狀態碼與回應格式
+    assert response_run_wrong.status_code == 401
+    json_response = response_run_wrong.json()
+    assert json_response["code"] == APIErrorCode.INVALID_CREDENTIALS.value
+
     response_update_wrong = client.post("/api/update_schedule", headers=headers)
-    assert response_update_wrong.status_code == 403
+    assert response_update_wrong.status_code == 401

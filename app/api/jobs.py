@@ -2,11 +2,14 @@
 
 import logging
 import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from typing import Optional
 from pydantic import BaseModel
 
 from app.api.dependencies import get_api_key
+
+# [修改] 導入新的例外類別
+from app.exceptions import InvalidInputException
 
 # [重構] 從新的 workers 模組匯入 actors
 from app.workers import (
@@ -38,9 +41,9 @@ def run_scraper_manually(request_data: ScraperRequest):
     date_str = request_data.date
 
     if mode not in ["daily", "monthly", "yearly"]:
-        raise HTTPException(
-            status_code=400,
-            detail="無效的模式。請使用 'daily', 'monthly', 或 'yearly'。",
+        # [修改] 改用自訂例外
+        raise InvalidInputException(
+            message="Invalid mode. Please use 'daily', 'monthly', or 'yearly'."
         )
 
     message = ""
@@ -49,18 +52,19 @@ def run_scraper_manually(request_data: ScraperRequest):
             try:
                 datetime.datetime.strptime(date_str, "%Y-%m-%d")
             except ValueError:
-                raise HTTPException(
-                    status_code=422, detail="日期格式錯誤，請使用 YYYY-MM-DD 格式。"
+                # [修改] 改用自訂例外
+                raise InvalidInputException(
+                    message="Invalid date format, please use YYYY-MM-DD."
                 )
         task_scrape_single_day.send(date_str)
-        message = f"已將每日爬蟲任務 ({date_str or '今天'}) 發送到背景佇列。"
+        message = f"Daily scraper task for ({date_str or 'today'}) has been sent to the queue."
 
     elif mode == "monthly":
         task_scrape_entire_month.send(date_str)
-        message = f"已將每月爬蟲任務 ({date_str or '本月'}) 發送到背景佇列。"
+        message = f"Monthly scraper task for ({date_str or 'this month'}) has been sent to the queue."
     elif mode == "yearly":
         task_scrape_entire_year.send(date_str)
-        message = f"已將每年爬蟲任務 ({date_str or '今年'}) 發送到背景佇列。"
+        message = f"Yearly scraper task for ({date_str or 'this year'}) has been sent to the queue."
 
     return {"message": message}
 
@@ -68,7 +72,7 @@ def run_scraper_manually(request_data: ScraperRequest):
 @router.post("/api/update_schedule", status_code=202)
 def update_schedule_manually():
     """手動觸發賽程更新任務。"""
-    logger.info("主程式：接收到更新請求，準備將任務發送到佇列...")
+    logger.info("Main app: Received schedule update request, sending task to queue...")
     task_update_schedule_and_reschedule.send()
-    logger.info("主程式：任務已成功發送，立即回傳 API 回應。")
-    return {"message": "已成功將賽程更新任務發送到背景佇列。"}
+    logger.info("Main app: Task sent successfully, returning API response immediately.")
+    return {"message": "Schedule update task has been successfully sent to the queue."}

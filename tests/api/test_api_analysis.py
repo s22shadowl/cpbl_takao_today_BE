@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from app import models
 from app.cache import redis_client
+from app.exceptions import APIErrorCode
 
 # --- 測試資料設定 Fixture ---
 
@@ -37,7 +38,7 @@ def setup_streak_test_data(db_session: Session):
         summary = models.PlayerGameSummaryDB(
             game_id=game.id,
             player_name=f"球員{name}",
-            batting_order=int(order),  # 確保棒次是整數
+            batting_order=int(order),
             team_name="測試隊",
         )
         db_session.add(summary)
@@ -112,7 +113,7 @@ def setup_ibb_impact_test_data(db_session: Session):
         summary = models.PlayerGameSummaryDB(
             game_id=game.id,
             player_name=f"影響者{name}",
-            batting_order=int(order),  # 確保棒次是整數
+            batting_order=int(order),
             team_name="測試隊",
         )
         db_session.add(summary)
@@ -199,7 +200,6 @@ def test_get_games_with_players_pagination(client: TestClient, db_session: Sessi
     db_session.add_all([s1a, s1b, s2a, s2b])
     db_session.commit()
 
-    # 查詢 A, B -> 應回傳 G2, G1 (因日期倒序)
     response = client.get(
         "/api/analysis/games-with-players?players=球員A&players=球員B&limit=1"
     )
@@ -257,9 +257,7 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
     db_session.add_all([hr1, hr2])
     db_session.commit()
 
-    # [修正] patch 的目標應為 crud.analysis 中被匯入的 datetime 模組
     with patch("app.crud.analysis.datetime") as mock_datetime:
-        # [修正] 設定 mock datetime 物件內部 date.today() 的回傳值
         mock_datetime.date.today.return_value = freezed_today
         response = client.get("/api/analysis/players/轟炸基/last-homerun")
 
@@ -270,6 +268,14 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
     assert data["days_since"] == 5
     assert data["games_since"] == 2
     assert data["at_bats_since"] == 8
+
+
+def test_get_last_homerun_not_found(client: TestClient):
+    """[新增] 測試查詢沒有全壘打紀錄的球員時，應回傳 404。"""
+    response = client.get("/api/analysis/players/無轟哥/last-homerun")
+    assert response.status_code == 404
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.PLAYER_NOT_FOUND.value
 
 
 def test_get_situational_at_bats(client: TestClient, db_session: Session):
@@ -312,7 +318,7 @@ def test_get_situational_at_bats(client: TestClient, db_session: Session):
     assert response_sp.status_code == 200
     data_sp = response_sp.json()
     assert len(data_sp) == 1
-    assert data_sp[0]["result_short"] == "滿貫砲"  # 倒序，所以先拿到滿貫砲
+    assert data_sp[0]["result_short"] == "滿貫砲"
 
 
 def test_get_streaks_by_specific_player_names(
@@ -355,6 +361,17 @@ def test_get_streaks_with_different_definition(
     assert data[0]["at_bats"][0]["player_name"] == "球員E"
 
 
+def test_get_streaks_conflicting_params(client: TestClient):
+    """[新增] 測試當同時提供 player_names 和 lineup_positions 時，應回傳 400 錯誤。"""
+    response = client.get(
+        "/api/analysis/streaks?player_names=A&player_names=B&lineup_positions=1&lineup_positions=2"
+    )
+    assert response.status_code == 400
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.INVALID_INPUT.value
+    assert "Cannot specify both" in json_response["message"]
+
+
 def test_get_ibb_impact_analysis_pagination(
     client: TestClient, setup_ibb_impact_test_data
 ):
@@ -364,4 +381,4 @@ def test_get_ibb_impact_analysis_pagination(
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
-    assert data[0]["inning"] == 2  # 倒序，拿到最新的
+    assert data[0]["inning"] == 2

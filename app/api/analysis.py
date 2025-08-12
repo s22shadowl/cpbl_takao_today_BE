@@ -1,7 +1,7 @@
 # app/api/analysis.py
 
 from app.crud import analysis
-from fastapi import APIRouter, HTTPException, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from typing import List, Optional
 from enum import Enum
 
@@ -10,6 +10,9 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.db import get_db
 from app.cache import cache
+
+# [新增] 導入新的例外類別
+from app.exceptions import PlayerNotFoundException, InvalidInputException
 
 
 router = APIRouter(
@@ -51,9 +54,8 @@ def get_last_homerun(request: Request, player_name: str, db: Session = Depends(g
     """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
     stats = analysis.get_stats_since_last_homerun(db, player_name)
     if not stats:
-        raise HTTPException(
-            status_code=404, detail=f"找不到球員 {player_name} 的全壘打紀錄。"
-        )
+        # [修改] 改用自訂例外
+        raise PlayerNotFoundException()
     return stats
 
 
@@ -95,7 +97,7 @@ def get_position_records(
     "/players/{player_name}/after-ibb",
     response_model=List[schemas.NextAtBatResult],
 )
-@cache()  # [修改] 為此端點加上快取
+@cache()
 def get_next_at_bats_after_ibb(
     request: Request,
     player_name: str,
@@ -120,7 +122,6 @@ def get_next_at_bats_after_ibb(
 def get_on_base_streaks(
     request: Request,
     db: Session = Depends(get_db),
-    # [修改] 改用 Enum 作為參數型別
     definition_name: StreakDefinition = Query(
         StreakDefinition.consecutive_on_base, description="要使用的連線定義"
     ),
@@ -141,9 +142,9 @@ def get_on_base_streaks(
     - 若未指定球員或棒次，則回傳所有長度達標的泛用連線。
     """
     if player_names and lineup_positions:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot specify both player_names and lineup_positions at the same time.",
+        # [修改] 改用自訂例外
+        raise InvalidInputException(
+            message="Cannot specify both player_names and lineup_positions at the same time."
         )
 
     streaks = analysis.find_on_base_streaks(

@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 import datetime
 from app import models
+from app.exceptions import APIErrorCode
 
 
 def setup_test_data(db_session: Session):
@@ -48,7 +49,10 @@ def test_get_player_stats_history_success(client: TestClient, db_session: Sessio
 def test_get_player_stats_history_not_found(client: TestClient):
     """測試查詢不存在的球員歷史數據時返回 404。"""
     response = client.get("/api/players/路人甲/stats/history")
+    # [修改] 驗證新的錯誤狀態碼與回應格式
     assert response.status_code == 404
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.PLAYER_NOT_FOUND.value
 
 
 def test_get_player_stats_history_pagination(client: TestClient, db_session: Session):

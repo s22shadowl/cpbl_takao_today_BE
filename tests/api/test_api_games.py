@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from app.crud import games
 from app import models
+from app.exceptions import APIErrorCode
 
 
 def test_get_games_by_date_success(client: TestClient, db_session: Session):
@@ -71,7 +72,11 @@ def test_get_games_by_date_not_found(client: TestClient):
 def test_get_games_by_date_bad_format(client: TestClient):
     """測試 /api/games/{game_date} 端點在傳入錯誤日期格式時的情況"""
     response = client.get("/api/games/2025-06-21-invalid")
-    assert response.status_code == 422
+    # [修改] 驗證新的錯誤狀態碼與回應格式
+    assert response.status_code == 400
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.INVALID_INPUT.value
+    assert "Invalid date format" in json_response["message"]
 
 
 def setup_game_detail_data(db_session: Session) -> models.GameResultDB:
@@ -138,12 +143,15 @@ def test_get_game_details_success(client: TestClient, db_session: Session):
 def test_get_game_details_not_found(client: TestClient):
     """測試查詢不存在的比賽 ID 時返回 404"""
     response = client.get("/api/games/details/9999")
+    # [修改] 驗證新的錯誤狀態碼與回應格式
     assert response.status_code == 404
+    json_response = response.json()
+    assert json_response["code"] == APIErrorCode.RESOURCE_NOT_FOUND.value
+    assert "Game with ID 9999 not found" in json_response["message"]
 
 
 def test_get_game_details_no_player_data(client: TestClient, db_session: Session):
     """[新增] 測試查詢一場存在但沒有任何球員資料的比賽"""
-    # [修正] 補上 non-nullable 欄位以避免 IntegrityError
     game = models.GameResultDB(
         cpbl_game_id="NO_PLAYER_DATA",
         game_date=datetime.date(2025, 1, 1),
@@ -164,7 +172,6 @@ def test_get_game_details_player_with_no_at_bats(
     client: TestClient, db_session: Session
 ):
     """[新增] 測試比賽中有球員出賽但沒有打席紀錄的情況"""
-    # [修正] 補上 non-nullable 欄位以避免 IntegrityError
     game = models.GameResultDB(
         cpbl_game_id="NO_AT_BATS",
         game_date=datetime.date(2025, 1, 2),

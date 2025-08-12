@@ -9,8 +9,9 @@ from app.config import settings
 from app.logging_config import setup_logging
 from app.api import games, jobs, players, analysis, system
 
-# 導入新的 middleware
+# 導入新的 middleware 與 exceptions
 from app.middleware import RequestContextMiddleware
+from app.exceptions import APIException, api_exception_handler
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# --- 掛載全域例外處理器 ---
+# [新增] 註冊自訂的例外處理器
+app.add_exception_handler(APIException, api_exception_handler)
+
 
 # --- 掛載所有 API 路由 ---
 app.include_router(games.router)
