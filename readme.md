@@ -200,6 +200,12 @@ cp .env.example .env
 
 在 `/docs` 頁面中，你可以直接在線上測試每一個 API 端點，並查看其請求與回應的詳細結構。
 
+## API 整合 (API Integration)
+
+若您需要將前端應用程式或任何外部客戶端與此後端服務對接，請參考我們詳細的「[API 整合指南](docs/api_integration_guide.md)」。
+
+該指南包含了完整的認證流程、CORS 策略、標準化的錯誤碼清單，以及 API 使用範例。
+
 ## 常用工具與腳本
 
 ### 批次匯入歷史數據 (`bulk_import.py`)
