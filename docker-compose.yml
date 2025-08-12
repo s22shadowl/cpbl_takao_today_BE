@@ -29,6 +29,8 @@ services:
       - DRAMATIQ_BROKER_URL=redis://redis:6379/0
       - REDIS_CACHE_URL=redis://redis:6379/1
       - API_KEY=${API_KEY}
+      # [新增] 將 CORS 設定傳入容器
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
     depends_on:
       - db
       - redis

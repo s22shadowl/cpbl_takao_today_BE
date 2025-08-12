@@ -3,7 +3,6 @@
 app = 'cpbl-takao-today-be'
 primary_region = 'sin'
 
-# [修改] 將 kill_timeout 調整為 Fly.io 平台允許的最大值 5 分鐘
 kill_signal = "SIGINT"
 kill_timeout = "300s"
 
@@ -39,27 +38,19 @@ kill_timeout = "300s"
   min_machines_running = 1
 
   [[services.checks]]
- type = "tcp"
- port = 8080
- interval = "15s"
- timeout = "2s"
- grace_period = "30s"
+  type = "tcp"
+  port = 8080
+  interval = "15s"
+  timeout = "2s"
+  grace_period = "30s"
 
-  # 設定 HTTP 健康檢查
   [[services.http_checks]]
-    # 每小時檢查一次
     interval = "1h"
-    # 每次檢查的超時時間
     timeout = "30s"
-    # 機器啟動後的寬限期
     grace_period = "30s"
-    # 使用 GET 方法
     method = "get"
-    # 指向我們新建的健康檢查端點
     path = "/api/system/health"
-    # 使用 http 協定 (在 Fly.io 內部網路)
     protocol = "http"
-    # 失敗後關閉機器
     restart_limit = 0
 
 [env]
@@ -67,3 +58,5 @@ kill_timeout = "300s"
   # 注意：JSON 陣列字串中的雙引號需要用反斜線進行轉義
   TARGET_TEAMS = "[\"台鋼雄鷹\"]"
   TARGET_PLAYERS = "[\"吳念庭\",\"魔鷹\",\"王柏融\"]"
+  # [新增] 生產環境的前端網域白名單
+  ALLOWED_ORIGINS = "[\"https://your-production-frontend.com\"]"

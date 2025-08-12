@@ -1,6 +1,7 @@
 # app/config.py
 
 import json
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional, Dict
 
@@ -55,8 +56,8 @@ class Settings(BaseSettings):
     CPBL_SEASON_START_MONTH: int = 3
     CPBL_SEASON_END_MONTH: int = 11
 
-    # 其他應用程式設定 (保留預設值)
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # [修改] 移除 ALLOWED_ORIGINS 的預設值，使其完全由環境變數控制
+    ALLOWED_ORIGINS: List[str]
     BASE_URL: str = "https://www.cpbl.com.tw"
     SCHEDULE_URL: str = f"{BASE_URL}/schedule"
     TEAM_SCORE_URL: str = f"{BASE_URL}/team/teamscore"
@@ -73,6 +74,26 @@ class Settings(BaseSettings):
         "consecutive_advancements": list(ADVANCEMENT_RESULTS),
     }
 
+    # [新增] 新增一個 field_validator 來處理來自環境變數的列表型字串
+    @field_validator(
+        "ALLOWED_ORIGINS", "TARGET_TEAMS", "TARGET_PLAYER_NAMES", mode="before"
+    )
+    @classmethod
+    def parse_json_or_comma_separated_string(cls, value):
+        """
+        自動將 JSON 格式的字串或逗號分隔的字串解析為 Python 列表。
+        這對於從 fly.toml 或環境變數讀取列表型別的設定至關重要。
+        """
+        if isinstance(value, str):
+            if value.startswith("[") and value.endswith("]"):
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    # 如果 JSON 解析失敗，則退回使用逗號分隔
+                    pass
+            return [item.strip() for item in value.split(",")]
+        return value
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -86,6 +107,7 @@ class Settings(BaseSettings):
     # [新增] 用於清除分析 API 快取的 Redis 鍵名模式
     REDIS_CACHE_KEY_PATTERN_ANALYSIS: str = "app.api.analysis:*"
 
+    # 由於加入了 field_validator，以下方法已非必要，但暫時保留以避免破壞性變更
     def get_target_teams_as_list(self) -> List[str]:
         """【修正】處理 str 或 list 型別的輸入，使其更穩健"""
         if isinstance(self.TARGET_TEAMS, list):
