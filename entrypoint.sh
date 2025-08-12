@@ -11,6 +11,6 @@ Xvfb :99 -screen 0 1280x720x24 &
 export DISPLAY=:99
 
 # 使用 exec "$@" 來執行傳遞給此腳本的任何命令
-# (例如 "uvicorn app.main:app..." 或 "dramatiq app.tasks")
+# (例如 "uvicorn app.main:app..." 或 "dramatiq app.workers")
 # exec 會讓主應用程式取代 shell，能正確地接收和處理來自 Fly.io 的關閉信號
 exec "$@"

@@ -109,7 +109,7 @@ jobs:
           EOF
 
           echo "Starting Worker service with xvfb..."
-          xvfb-run dramatiq app.tasks:redis_broker app.tasks --processes 2 > worker.log 2>&1 &
+          xvfb-run dramatiq app.workers:redis_broker app.workers --processes 2 > worker.log 2>&1 &
           sleep 5
           echo "Worker service started."
 

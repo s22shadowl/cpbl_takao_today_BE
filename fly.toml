@@ -13,7 +13,7 @@ kill_timeout = "300s"
 [processes]
   web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
   # [修改] 對應地，將 dramatiq 的內部超時調整為 285 秒 (4 分鐘 45 秒)
-  worker = "dramatiq app.tasks --worker-shutdown-timeout 285000"
+  worker = "dramatiq app.workers --worker-shutdown-timeout 285000"
 
 [[services]]
   processes = ["web"]
