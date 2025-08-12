@@ -13,7 +13,7 @@ from app.config import settings
 
 
 def find_games_with_players(
-    db: Session, player_names: List[str]
+    db: Session, player_names: List[str], skip: int = 0, limit: int = 100
 ) -> List[models.GameResultDB]:
     """查詢指定的所有球員同時出賽的比賽列表。"""
     if not player_names:
@@ -34,6 +34,8 @@ def find_games_with_players(
         db.query(models.GameResultDB)
         .filter(models.GameResultDB.id.in_(subquery.select()))
         .order_by(models.GameResultDB.game_date.desc())
+        .offset(skip)
+        .limit(limit)
         .all()
     )
     return games
@@ -92,7 +94,11 @@ def get_stats_since_last_homerun(
 
 
 def find_at_bats_in_situation(
-    db: Session, player_name: str, situation: models.RunnersSituation
+    db: Session,
+    player_name: str,
+    situation: models.RunnersSituation,
+    skip: int = 0,
+    limit: int = 100,
 ) -> List[models.AtBatDetailDB]:
     """【修改】查詢指定球員在特定壘上情境下的所有打席紀錄。"""
     query = (
@@ -116,15 +122,20 @@ def find_at_bats_in_situation(
     elif situation == models.RunnersSituation.BASES_EMPTY:
         query = query.filter(models.AtBatDetailDB.runners_on_base_before == "壘上無人")
 
-    at_bats = query.order_by(
-        models.GameResultDB.game_date.desc(),
-        models.AtBatDetailDB.sequence_in_game.desc(),
-    ).all()
+    at_bats = (
+        query.order_by(
+            models.GameResultDB.game_date.desc(),
+            models.AtBatDetailDB.sequence_in_game.desc(),
+        )
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return at_bats
 
 
 def get_summaries_by_position(
-    db: Session, position: str
+    db: Session, position: str, skip: int = 0, limit: int = 100
 ) -> List[models.PlayerGameSummaryDB]:
     """查詢指定守備位置的所有球員出賽紀錄。"""
     summaries = (
@@ -132,12 +143,16 @@ def get_summaries_by_position(
         .filter(models.PlayerGameSummaryDB.position == position)
         .join(models.GameResultDB)
         .order_by(models.GameResultDB.game_date.desc())
+        .offset(skip)
+        .limit(limit)
         .all()
     )
     return summaries
 
 
-def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str, Any]]:
+def find_next_at_bats_after_ibb(
+    db: Session, player_name: str, skip: int = 0, limit: int = 100
+) -> List[Dict[str, Any]]:
     """【V2 版】使用 SQL 窗口函數 (LEAD) 高效查詢指定球員被故意四壞後，同一半局內下一位打者的打席結果。"""
 
     at_bat_with_next_subquery = (
@@ -177,6 +192,8 @@ def find_next_at_bats_after_ibb(db: Session, player_name: str) -> List[Dict[str,
         .filter(models.PlayerGameSummaryDB.player_name == player_name)
         .filter(ibb_at_bat.result_description_full.contains("故意四壞"))
         .order_by(ibb_at_bat.id.desc())
+        .offset(skip)
+        .limit(limit)
         .all()
     )
 
@@ -191,6 +208,8 @@ def find_on_base_streaks(
     min_length: int,
     player_names: Optional[List[str]],
     lineup_positions: Optional[List[int]],
+    skip: int = 0,
+    limit: int = 100,
 ) -> List[schemas.OnBaseStreak]:
     """
     【重構】查詢符合「連線」定義的打席序列。
@@ -298,9 +317,10 @@ def find_on_base_streaks(
         if len(current_streak) >= min_length:
             all_streaks.append(list(current_streak))
 
-    # 4. 將最終結果格式化為 Pydantic 模型
+    # 4. 將最終結果格式化為 Pydantic 模型並應用分頁
+    paginated_streaks = all_streaks[skip : skip + limit]
     result_models = []
-    for streak in all_streaks:
+    for streak in paginated_streaks:
         if not streak:
             continue
         game = streak[0].player_summary.game
@@ -323,10 +343,13 @@ def find_on_base_streaks(
         )
         result_models.append(streak_model)
 
-    return result_models
+    # 由於查詢是升序的，為了讓 API 回傳最新的在前面，這裡進行反轉
+    return result_models[::-1]
 
 
-def analyze_ibb_impact(db: Session, player_name: str) -> List[schemas.IbbImpactResult]:
+def analyze_ibb_impact(
+    db: Session, player_name: str, skip: int = 0, limit: int = 100
+) -> List[schemas.IbbImpactResult]:
     """
     【新增】分析指定球員被故意四壞後，對該半局總失分的影響。
     """
@@ -410,4 +433,5 @@ def analyze_ibb_impact(db: Session, player_name: str) -> List[schemas.IbbImpactR
             results.append(impact_result)
 
     # 由於查詢是升序的，為了讓 API 回傳最新的在前面，這裡進行反轉
-    return results[::-1]
+    paginated_results = results[::-1][skip : skip + limit]
+    return paginated_results
