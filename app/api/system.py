@@ -27,16 +27,36 @@ router = APIRouter(
 @router.get("/health", status_code=status.HTTP_200_OK)
 def health_check(db: Session = Depends(get_db)):
     """
-    執行健康檢查。
+    執行健康檢查，包含對資料庫與 Redis 的連線測試。
     """
+    results = {}
+    # 檢查資料庫連線
     try:
         db.execute(text("SELECT 1"))
-        return {"status": "ok", "database": "ok"}
+        results["database"] = "ok"
     except Exception as e:
+        logging.error(f"健康檢查失敗：資料庫連線錯誤 - {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Database connection error: {e}",
         )
+
+    # [修改] 增加 Redis 連線檢查
+    if redis_client:
+        try:
+            redis_client.ping()
+            results["redis"] = "ok"
+        except Exception as e:
+            logging.error(f"健康檢查失敗：Redis 連線錯誤 - {e}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Redis connection error: {e}",
+            )
+    else:
+        results["redis"] = "not configured"
+
+    results["status"] = "ok"
+    return results
 
 
 async def verify_api_key(x_api_key: Annotated[str, Header()]):
@@ -60,7 +80,8 @@ def clear_analysis_cache():
         return {"message": "Redis client not available. Cache not cleared."}
 
     try:
-        cache_key_pattern = "app.api.analysis:*"
+        # [修改] 從 config 讀取鍵名模式，以降低模組間的耦合
+        cache_key_pattern = settings.REDIS_CACHE_KEY_PATTERN_ANALYSIS
         logging.info(f"準備清除快取，使用模式: {cache_key_pattern}")
 
         keys_to_delete = [
@@ -128,7 +149,9 @@ def get_task_status(task_id: str):
         )
 
     try:
-        # ▼▼▼ 修正: 提供 Message 建構函式所需的所有 dummy 參數 ▼▼▼
+        # Dramatiq 的 result backend 需要一個 Message 物件來查詢結果。
+        # 由於此處我們只有 task_id，因此我們建立一個 dummy message。
+        # 這是目前在不知道 actor name 的情況下查詢任意任務狀態的標準作法。
         message = dramatiq.Message(
             queue_name="default",
             actor_name="unknown",
@@ -137,7 +160,7 @@ def get_task_status(task_id: str):
             options={},
             message_id=task_id,
         )
-        stored_result = result_backend.get_result(message)
+        stored_result = result_backend.get_result(message, block=False)
 
         if isinstance(stored_result, Exception):
             logging.warning(f"Task {task_id} failed with exception: {stored_result}")
@@ -145,7 +168,12 @@ def get_task_status(task_id: str):
 
         return {"task_id": task_id, "status": "succeeded"}
     except ResultMissing:
+        # [修改] 增加日誌清晰度，說明此狀態的模糊性
+        logging.info(
+            f"Task {task_id} result is missing. "
+            f"Assuming it is still running, has never existed, or the result has expired."
+        )
         return {"task_id": task_id, "status": "running"}
     except Exception as e:
-        logging.error(f"查詢任務狀態時發生錯誤 (ID: {task_id}): {e}", exc_info=True)
+        logging.error(f"查詢任務狀態時發生未知錯誤 (ID: {task_id}): {e}", exc_info=True)
         return {"task_id": task_id, "status": "unknown"}

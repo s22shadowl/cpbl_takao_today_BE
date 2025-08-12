@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # 【新增】E2E 測試模式開關
     E2E_TEST_MODE: bool = False
 
+    # --- 快取設定 ---
+    # [新增] 用於清除分析 API 快取的 Redis 鍵名模式
+    REDIS_CACHE_KEY_PATTERN_ANALYSIS: str = "app.api.analysis:*"
+
     def get_target_teams_as_list(self) -> List[str]:
         """【修正】處理 str 或 list 型別的輸入，使其更穩健"""
         if isinstance(self.TARGET_TEAMS, list):
