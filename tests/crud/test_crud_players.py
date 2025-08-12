@@ -97,3 +97,28 @@ def test_store_player_game_data_with_details(db_session):
     assert len(details) == 2
     assert details[0].result_short == "一安"
     assert details[1].inning == 3
+
+
+def test_store_player_game_data_empty_list(db_session):
+    """[新增] 測試當傳入空的 all_players_data 列表時，函式能優雅地處理。"""
+    db = db_session
+    game_info = {
+        "cpbl_game_id": "TEST_EMPTY",
+        "game_date": "2025-01-01",
+        "home_team": "H",
+        "away_team": "A",
+    }
+    game_id = games.create_game_and_get_id(db, game_info)
+    db.commit()
+    assert game_id is not None
+
+    initial_summary_count = db.query(models.PlayerGameSummaryDB).count()
+    initial_detail_count = db.query(models.AtBatDetailDB).count()
+
+    # 執行函式
+    players.store_player_game_data(db, game_id, [])
+    db.commit()
+
+    # 驗證資料庫沒有任何變動
+    assert db.query(models.PlayerGameSummaryDB).count() == initial_summary_count
+    assert db.query(models.AtBatDetailDB).count() == initial_detail_count
