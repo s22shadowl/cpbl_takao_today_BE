@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.logging_config import setup_logging
-from app.api import games, jobs, players, analysis, system
+from app.api import games, jobs, players, analysis, system, dashboard
 
 # 導入新的 middleware 與 exceptions
 from app.middleware import RequestContextMiddleware
@@ -50,3 +50,4 @@ app.include_router(players.router)
 app.include_router(analysis.router)
 app.include_router(jobs.router)
 app.include_router(system.router)
+app.include_router(dashboard.router)

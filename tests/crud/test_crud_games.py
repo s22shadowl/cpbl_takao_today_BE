@@ -155,7 +155,6 @@ def test_update_and_get_game_schedules(db_session):
     assert schedules_from_db_updated[0].game_id == "180"
 
 
-# --- ▼▼▼ 新增這個測試函式 ▼▼▼ ---
 def test_get_games_by_date(db_session):
     """測試 get_games_by_date 函式"""
     db = db_session
@@ -193,9 +192,6 @@ def test_get_games_by_date(db_session):
     # 測試一個沒有比賽的日期
     no_game_results = games.get_games_by_date(db, datetime.date(2025, 1, 1))
     assert len(no_game_results) == 0
-
-
-# --- ▲▲▲ 新增這個測試函式 ▲▲▲ ---
 
 
 def test_get_game_with_details(db_session):
@@ -242,3 +238,149 @@ def test_get_game_with_details(db_session):
     assert len(player_summary.at_bat_details) == 2
     assert player_summary.at_bat_details[0].result_short == "全壘打"
     assert player_summary.at_bat_details[1].result_short == "保送"
+
+
+# === ▼▼▼ 新增 Dashboard CRUD Functions 的測試 ▼▼▼ ===
+
+
+def test_get_completed_games_by_date(db_session):
+    """測試 get_completed_games_by_date 是否只回傳指定日期的已完成比賽"""
+    db = db_session
+    target_date = datetime.date(2025, 8, 15)
+    other_date = datetime.date(2025, 8, 16)
+
+    # 準備測試資料
+    # 1. 目標日期的已完成比賽 (應被回傳)
+    game1 = models.GameResultDB(
+        cpbl_game_id="DASH01",
+        game_date=target_date,
+        status="Final",
+        home_team="H1",
+        away_team="A1",
+    )
+    # 2. 目標日期的未完成比賽 (不應被回傳)
+    game2 = models.GameResultDB(
+        cpbl_game_id="DASH02",
+        game_date=target_date,
+        status="Scheduled",
+        home_team="H2",
+        away_team="A2",
+    )
+    # 3. 其他日期的已完成比賽 (不應被回傳)
+    game3 = models.GameResultDB(
+        cpbl_game_id="DASH03",
+        game_date=other_date,
+        status="Final",
+        home_team="H3",
+        away_team="A3",
+    )
+    db.add_all([game1, game2, game3])
+    db.commit()
+
+    # 執行函式
+    results = games.get_completed_games_by_date(db, target_date)
+
+    # 驗證結果
+    assert len(results) == 1
+    assert results[0].cpbl_game_id == "DASH01"
+    assert results[0].status == "Final"
+
+
+def test_get_next_game_date_after(db_session):
+    """測試 get_next_game_date_after 是否能找到正確的下一個比賽日"""
+    db = db_session
+    reference_date = datetime.date(2025, 8, 15)
+
+    # 準備測試資料
+    # 修正: 補上 non-nullable 欄位 home_team 和 away_team
+    game1 = models.GameResultDB(
+        game_date=reference_date, home_team="H1", away_team="A1"
+    )
+    game2 = models.GameResultDB(
+        game_date=datetime.date(2025, 8, 20), home_team="H2", away_team="A2"
+    )
+    game3 = models.GameResultDB(
+        game_date=datetime.date(2025, 8, 17), home_team="H3", away_team="A3"
+    )
+    game4 = models.GameResultDB(
+        game_date=datetime.date(2025, 8, 14), home_team="H4", away_team="A4"
+    )
+    db.add_all([game1, game2, game3, game4])
+    db.commit()
+
+    # 執行函式
+    next_date = games.get_next_game_date_after(db, reference_date)
+
+    # 驗證結果
+    assert next_date is not None
+    assert next_date == datetime.date(2025, 8, 17)
+
+    # 測試沒有未來比賽的情況
+    no_future_date = games.get_next_game_date_after(db, datetime.date(2025, 8, 21))
+    assert no_future_date is None
+
+
+def test_get_last_completed_game_for_teams(db_session):
+    """測試 get_last_completed_game_for_teams 能否找到正確的最後一場比賽"""
+    db = db_session
+    reference_date = datetime.date(2025, 8, 15)
+    target_teams = ["目標A隊", "目標B隊"]
+
+    # 準備測試資料
+    # 1. 正確的目標比賽 (日期最近，隊伍正確，狀態正確)
+    game1 = models.GameResultDB(
+        cpbl_game_id="LAST01",
+        game_date=datetime.date(2025, 8, 14),
+        status="Final",
+        home_team="目標A隊",
+        away_team="其他隊",
+    )
+    # 2. 較早的比賽
+    game2 = models.GameResultDB(
+        cpbl_game_id="LAST02",
+        game_date=datetime.date(2025, 8, 13),
+        status="Final",
+        home_team="其他隊",
+        away_team="目標B隊",
+    )
+    # 3. 未完成的比賽 (修正: 變更 away_team 以避免 UNIQUE constraint 衝突)
+    game3 = models.GameResultDB(
+        cpbl_game_id="LAST03",
+        game_date=datetime.date(2025, 8, 14),
+        status="Scheduled",
+        home_team="目標A隊",
+        away_team="其他隊_v2",
+    )
+    # 4. 非目標隊伍的比賽
+    game4 = models.GameResultDB(
+        cpbl_game_id="LAST04",
+        game_date=datetime.date(2025, 8, 14),
+        status="Final",
+        home_team="其他隊C",
+        away_team="其他隊D",
+    )
+    # 5. 未來的比賽
+    game5 = models.GameResultDB(
+        cpbl_game_id="LAST05",
+        game_date=datetime.date(2025, 8, 16),
+        status="Final",
+        home_team="目標A隊",
+        away_team="其他隊",
+    )
+    db.add_all([game1, game2, game3, game4, game5])
+    db.commit()
+
+    # 執行函式
+    result_game = games.get_last_completed_game_for_teams(
+        db, target_teams, reference_date
+    )
+
+    # 驗證結果
+    assert result_game is not None
+    assert result_game.cpbl_game_id == "LAST01"
+
+    # 測試找不到比賽的情況
+    no_result_game = games.get_last_completed_game_for_teams(
+        db, ["不存在的隊伍"], reference_date
+    )
+    assert no_result_game is None

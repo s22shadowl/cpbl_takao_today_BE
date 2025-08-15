@@ -1,5 +1,5 @@
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Optional, List
+from typing import Literal, Optional, List, Union
 import datetime
 
 from app.models import AtBatResultType
@@ -178,7 +178,7 @@ class OnBaseStreak(BaseModel):
 
 
 # ==============================================================================
-# 4. 【新增】「故意四壞影響」功能專用 Pydantic 模型
+# 4. 「故意四壞影響」功能專用 Pydantic 模型
 # ==============================================================================
 
 
@@ -201,3 +201,30 @@ class IbbImpactResult(BaseModel):
     )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# ==============================================================================
+# 5. Dashboard Schemas
+# ==============================================================================
+
+
+class DashboardHasGamesResponse(BaseModel):
+    status: Literal["HAS_TODAY_GAMES"]
+    games: list["GameResultWithDetails"]
+
+
+class DashboardNoGamesResponse(BaseModel):
+    status: Literal["NO_TODAY_GAMES"]
+    # 修正: 將 date | None 改為 Union[date, None]
+    next_game_date: Union[datetime.date, None] = Field(
+        None,
+        description="下一場比賽的日期",
+        examples=["2025-08-17"],
+    )
+    # 修正: 將 "GameResultWithDetails" | None 改為 Union["GameResultWithDetails", None]
+    last_target_team_game: Union["GameResultWithDetails", None] = Field(
+        None, description="目標球隊的上一場完整比賽數據"
+    )
+
+
+DashboardResponse = Union[DashboardHasGamesResponse, DashboardNoGamesResponse]
