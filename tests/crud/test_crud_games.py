@@ -289,33 +289,40 @@ def test_get_completed_games_by_date(db_session):
 def test_get_next_game_date_after(db_session):
     """測試 get_next_game_date_after 是否能找到正確的下一個比賽日"""
     db = db_session
-    reference_date = datetime.date(2025, 8, 15)
-
     # 準備測試資料
-    # 修正: 補上 non-nullable 欄位 home_team 和 away_team
-    game1 = models.GameResultDB(
-        game_date=reference_date, home_team="H1", away_team="A1"
+    schedule_past = models.GameSchedule(
+        game_id="SCHED_PAST", game_date=datetime.date(2025, 8, 14), matchup="G vs H"
     )
-    game2 = models.GameResultDB(
-        game_date=datetime.date(2025, 8, 20), home_team="H2", away_team="A2"
+    schedule_today = models.GameSchedule(
+        game_id="SCHED_CUR", game_date=datetime.date(2025, 8, 15), matchup="A vs B"
     )
-    game3 = models.GameResultDB(
-        game_date=datetime.date(2025, 8, 17), home_team="H3", away_team="A3"
+    schedule_future_near = models.GameSchedule(
+        game_id="SCHED_NEAR", game_date=datetime.date(2025, 8, 17), matchup="E vs F"
     )
-    game4 = models.GameResultDB(
-        game_date=datetime.date(2025, 8, 14), home_team="H4", away_team="A4"
+    schedule_future_far = models.GameSchedule(
+        game_id="SCHED_FAR", game_date=datetime.date(2025, 8, 20), matchup="C vs D"
     )
-    db.add_all([game1, game2, game3, game4])
+    db.add_all(
+        [
+            schedule_past,
+            schedule_today,
+            schedule_future_near,
+            schedule_future_far,
+        ]
+    )
     db.commit()
 
-    # 執行函式
-    next_date = games.get_next_game_date_after(db, reference_date)
+    # --- 情境一: 從今天開始找，應找到今天 ---
+    next_date_is_today = games.get_next_game_date_after(db, datetime.date(2025, 8, 15))
+    assert next_date_is_today is not None
+    assert next_date_is_today == datetime.date(2025, 8, 15)
 
-    # 驗證結果
-    assert next_date is not None
-    assert next_date == datetime.date(2025, 8, 17)
+    # --- 情境二: 從沒有比賽的明天開始找，應找到未來的最近一天 ---
+    next_date_is_future = games.get_next_game_date_after(db, datetime.date(2025, 8, 16))
+    assert next_date_is_future is not None
+    assert next_date_is_future == datetime.date(2025, 8, 17)
 
-    # 測試沒有未來比賽的情況
+    # --- 情境三: 測試沒有未來比賽的情況 ---
     no_future_date = games.get_next_game_date_after(db, datetime.date(2025, 8, 21))
     assert no_future_date is None
 
@@ -331,7 +338,7 @@ def test_get_last_completed_game_for_teams(db_session):
     game1 = models.GameResultDB(
         cpbl_game_id="LAST01",
         game_date=datetime.date(2025, 8, 14),
-        status="Final",
+        status="已完成",
         home_team="目標A隊",
         away_team="其他隊",
     )
@@ -339,7 +346,7 @@ def test_get_last_completed_game_for_teams(db_session):
     game2 = models.GameResultDB(
         cpbl_game_id="LAST02",
         game_date=datetime.date(2025, 8, 13),
-        status="Final",
+        status="已完成",
         home_team="其他隊",
         away_team="目標B隊",
     )
@@ -347,7 +354,7 @@ def test_get_last_completed_game_for_teams(db_session):
     game3 = models.GameResultDB(
         cpbl_game_id="LAST03",
         game_date=datetime.date(2025, 8, 14),
-        status="Scheduled",
+        status="未開始",
         home_team="目標A隊",
         away_team="其他隊_v2",
     )
@@ -355,7 +362,7 @@ def test_get_last_completed_game_for_teams(db_session):
     game4 = models.GameResultDB(
         cpbl_game_id="LAST04",
         game_date=datetime.date(2025, 8, 14),
-        status="Final",
+        status="已完成",
         home_team="其他隊C",
         away_team="其他隊D",
     )
@@ -363,7 +370,7 @@ def test_get_last_completed_game_for_teams(db_session):
     game5 = models.GameResultDB(
         cpbl_game_id="LAST05",
         game_date=datetime.date(2025, 8, 16),
-        status="Final",
+        status="已完成",
         home_team="目標A隊",
         away_team="其他隊",
     )

@@ -184,12 +184,12 @@ def get_next_game_date_after(
     db: Session, after_date: datetime.date
 ) -> datetime.date | None:
     """
-    查詢指定日期之後的下一個比賽日期。
+    查詢指定日期的未開始賽事或之後的下一個比賽日期。
     """
     statement = (
-        select(models.GameResultDB.game_date)
-        .where(models.GameResultDB.game_date > after_date)
-        .order_by(models.GameResultDB.game_date.asc())
+        select(models.GameSchedule.game_date)
+        .where(models.GameSchedule.game_date >= after_date)
+        .order_by(models.GameSchedule.game_date.asc())
         .limit(1)
     )
     return db.execute(statement).scalar_one_or_none()
@@ -206,7 +206,7 @@ def get_last_completed_game_for_teams(
         .where(
             and_(
                 models.GameResultDB.game_date < before_date,
-                models.GameResultDB.status == "Final",
+                models.GameResultDB.status == "已完成",
                 or_(
                     models.GameResultDB.home_team.in_(teams),
                     models.GameResultDB.away_team.in_(teams),
