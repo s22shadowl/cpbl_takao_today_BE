@@ -254,7 +254,7 @@ def test_get_completed_games_by_date(db_session):
     game1 = models.GameResultDB(
         cpbl_game_id="DASH01",
         game_date=target_date,
-        status="Final",
+        status="已完成",
         home_team="H1",
         away_team="A1",
     )
@@ -270,7 +270,7 @@ def test_get_completed_games_by_date(db_session):
     game3 = models.GameResultDB(
         cpbl_game_id="DASH03",
         game_date=other_date,
-        status="Final",
+        status="已完成",
         home_team="H3",
         away_team="A3",
     )
@@ -283,7 +283,7 @@ def test_get_completed_games_by_date(db_session):
     # 驗證結果
     assert len(results) == 1
     assert results[0].cpbl_game_id == "DASH01"
-    assert results[0].status == "Final"
+    assert results[0].status == "已完成"
 
 
 def test_get_next_game_date_after(db_session):

@@ -23,7 +23,7 @@ def test_get_today_dashboard_data_with_games(db_session):
     game1 = models.GameResultDB(
         cpbl_game_id="G01",
         game_date=today,
-        status="Final",
+        status="已完成",
         home_team="A",
         away_team="B",
     )
@@ -39,7 +39,7 @@ def test_get_today_dashboard_data_with_games(db_session):
     game3 = models.GameResultDB(
         cpbl_game_id="G03",
         game_date=today - datetime.timedelta(days=1),
-        status="Final",
+        status="已完成",
         home_team="E",
         away_team="F",
     )
@@ -72,45 +72,43 @@ def test_get_today_dashboard_data_no_games(db_session):
     target_teams = ["目標A隊", "目標B隊"]
 
     # 準備資料
-    # 1. 未來的比賽 (應找到 8/17 這場)
-    next_game_1 = models.GameResultDB(
-        cpbl_game_id="NEXT01",
+    # 【修正】 1. 未來的比賽應建立在 GameSchedule 表格
+    next_schedule_1 = models.GameSchedule(
+        game_id="NEXT01",
         game_date=today + datetime.timedelta(days=2),  # 2025-08-17
-        home_team="A",
-        away_team="B",
+        matchup="A vs B",
     )
-    next_game_2 = models.GameResultDB(
-        cpbl_game_id="NEXT02",
+    next_schedule_2 = models.GameSchedule(
+        game_id="NEXT02",
         game_date=today + datetime.timedelta(days=5),  # 2025-08-20
-        home_team="C",
-        away_team="D",
+        matchup="C vs D",
     )
-    # 2. 過去的比賽 (應找到目標A隊 8/14 這場)
+    # 2. 過去的比賽 (應找到目標A隊 8/14 這場)，維持在 GameResultDB
     last_game_target = models.GameResultDB(
         cpbl_game_id="LAST_TARGET",
         game_date=today - datetime.timedelta(days=1),  # 2025-08-14
-        status="Final",
+        status="已完成",
         home_team="目標A隊",
         away_team="C",
     )
     last_game_older = models.GameResultDB(
         cpbl_game_id="LAST_OLDER",
         game_date=today - datetime.timedelta(days=3),  # 2025-08-12
-        status="Final",
+        status="已完成",
         home_team="目標B隊",
         away_team="D",
     )
     last_game_other_team = models.GameResultDB(
         cpbl_game_id="LAST_OTHER",
         game_date=today - datetime.timedelta(days=1),  # 2025-08-14
-        status="Final",
+        status="已完成",
         home_team="其他隊",
         away_team="E",
     )
     db.add_all(
         [
-            next_game_1,
-            next_game_2,
+            next_schedule_1,
+            next_schedule_2,
             last_game_target,
             last_game_older,
             last_game_other_team,
@@ -145,7 +143,7 @@ def test_get_today_dashboard_data_no_games_and_no_data(db_session):
     other_game = models.GameResultDB(
         cpbl_game_id="OTHER",
         game_date=datetime.date(2025, 8, 1),
-        status="Final",
+        status="已完成",
         home_team="其他隊",
         away_team="無關隊",
     )

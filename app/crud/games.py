@@ -170,7 +170,7 @@ def get_completed_games_by_date(
         .where(
             and_(
                 models.GameResultDB.game_date == game_date,
-                models.GameResultDB.status == "Final",
+                models.GameResultDB.status == "已完成",
             )
         )
         .options(joinedload(models.GameResultDB.player_summaries))

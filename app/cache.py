@@ -23,10 +23,16 @@ except redis.exceptions.ConnectionError as e:
 
 def _generate_cache_key(func: Callable, request: Request) -> str:
     """
-    根據我們討論的策略，產生一個唯一的快取鍵。
-    格式: [module_name]:[func_name]:[sorted_query_params]
+    【修正】根據我們討論的策略，產生一個唯一的快取鍵。
+    格式: [module_name]:[func_name]:[sorted_all_params]
     """
-    sorted_params = sorted(request.query_params.items())
+    # 將路徑參數與查詢參數合併，以確保快取鍵的唯一性
+    all_params = dict(request.query_params)
+    all_params.update(request.path_params)
+
+    # 排序以確保參數順序不同時，快取鍵仍然相同
+    sorted_params = sorted(all_params.items())
+
     params_str = "&".join([f"{k}={v}" for k, v in sorted_params])
     cache_key = f"{func.__module__}:{func.__name__}:{params_str}"
     return cache_key
@@ -57,7 +63,7 @@ def cache(expire: int = 3600 * 24):  # 預設 TTL 為 24 小時
                 result = func(request=request, *args, **kwargs)
 
                 # 3. 將函式結果存入快取
-                # 【修正】使用 jsonable_encoder 將結果轉換為 JSON 相容的格式
+                # 使用 jsonable_encoder 將結果轉換為 JSON 相容的格式
                 json_compatible_result = jsonable_encoder(result)
                 redis_client.setex(
                     cache_key, expire, json.dumps(json_compatible_result)
