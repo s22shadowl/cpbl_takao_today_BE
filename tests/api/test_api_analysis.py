@@ -226,31 +226,35 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
         home_team="H",
         away_team="A",
     )
-    g2 = models.GameResultDB(
+    g2_hr = models.GameResultDB(
         cpbl_game_id="G_HR2",
         game_date=datetime.date(2025, 8, 5),
         home_team="H",
         away_team="A",
     )
-    g3 = models.GameResultDB(
+    g3_after = models.GameResultDB(
         cpbl_game_id="G_HR3",
         game_date=datetime.date(2025, 8, 8),
         home_team="H",
         away_team="A",
     )
-    db_session.add_all([g1, g2, g3])
+    db_session.add_all([g1, g2_hr, g3_after])
     db_session.flush()
     s1 = models.PlayerGameSummaryDB(game_id=g1.id, player_name="轟炸基", at_bats=4)
-    s2 = models.PlayerGameSummaryDB(game_id=g2.id, player_name="轟炸基", at_bats=5)
-    s3 = models.PlayerGameSummaryDB(game_id=g3.id, player_name="轟炸基", at_bats=3)
-    db_session.add_all([s1, s2, s3])
+    s2_hr = models.PlayerGameSummaryDB(
+        game_id=g2_hr.id, player_name="轟炸基", at_bats=5
+    )
+    s3_after = models.PlayerGameSummaryDB(
+        game_id=g3_after.id, player_name="轟炸基", at_bats=3
+    )
+    db_session.add_all([s1, s2_hr, s3_after])
     db_session.flush()
     hr1 = models.AtBatDetailDB(
         player_game_summary_id=s1.id, game_id=g1.id, result_description_full="全壘打"
     )
     hr2 = models.AtBatDetailDB(
-        player_game_summary_id=s2.id,
-        game_id=g2.id,
+        player_game_summary_id=s2_hr.id,
+        game_id=g2_hr.id,
         result_description_full="關鍵全壘打",
         opposing_pitcher_name="投手B",
     )
@@ -266,8 +270,9 @@ def test_get_last_homerun_with_stats(client: TestClient, db_session: Session):
     assert data["last_homerun"]["opposing_pitcher_name"] == "投手B"
     assert data["game_date"] == "2025-08-05"
     assert data["days_since"] == 5
-    assert data["games_since"] == 2
-    assert data["at_bats_since"] == 8
+    # [修正] 根據新的、更精確的 ">" 邏輯，只有 8/8 的比賽會被計入
+    assert data["games_since"] == 1
+    assert data["at_bats_since"] == 3
 
 
 def test_get_last_homerun_not_found(client: TestClient):

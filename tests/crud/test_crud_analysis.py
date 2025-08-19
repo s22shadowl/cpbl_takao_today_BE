@@ -219,31 +219,37 @@ def test_get_stats_since_last_homerun(db_session: Session):
         home_team="H",
         away_team="A",
     )
-    g2 = models.GameResultDB(
+    # 這個是最後一轟
+    g2_hr = models.GameResultDB(
         cpbl_game_id="G_HR2",
         game_date=datetime.date(2025, 8, 5),
         home_team="H",
         away_team="A",
     )
-    g3 = models.GameResultDB(
+    # 全壘打之後的比賽
+    g3_after = models.GameResultDB(
         cpbl_game_id="G_HR3",
         game_date=datetime.date(2025, 8, 8),
         home_team="H",
         away_team="A",
     )
-    db_session.add_all([g1, g2, g3])
+    db_session.add_all([g1, g2_hr, g3_after])
     db_session.flush()
     s1 = models.PlayerGameSummaryDB(game_id=g1.id, player_name="轟炸基", at_bats=4)
-    s2 = models.PlayerGameSummaryDB(game_id=g2.id, player_name="轟炸基", at_bats=5)
-    s3 = models.PlayerGameSummaryDB(game_id=g3.id, player_name="轟炸基", at_bats=3)
-    db_session.add_all([s1, s2, s3])
+    s2_hr = models.PlayerGameSummaryDB(
+        game_id=g2_hr.id, player_name="轟炸基", at_bats=5
+    )
+    s3_after = models.PlayerGameSummaryDB(
+        game_id=g3_after.id, player_name="轟炸基", at_bats=3
+    )
+    db_session.add_all([s1, s2_hr, s3_after])
     db_session.flush()
     hr1 = models.AtBatDetailDB(
         player_game_summary_id=s1.id, game_id=g1.id, result_description_full="全壘打"
     )
     hr2 = models.AtBatDetailDB(
-        player_game_summary_id=s2.id,
-        game_id=g2.id,
+        player_game_summary_id=s2_hr.id,
+        game_id=g2_hr.id,
         result_description_full="關鍵全壘打",
     )
     db_session.add_all([hr1, hr2])
@@ -254,10 +260,119 @@ def test_get_stats_since_last_homerun(db_session: Session):
         stats = analysis.get_stats_since_last_homerun(db_session, "轟炸基")
 
     assert stats is not None
+    # 驗證找到的是 8/5 的全壘打
     assert stats["game_date"] == datetime.date(2025, 8, 5)
     assert stats["days_since"] == 5
-    assert stats["games_since"] == 2
-    assert stats["at_bats_since"] == 8
+    # 驗證只計算 8/8 的比賽
+    assert stats["games_since"] == 1
+    assert stats["at_bats_since"] == 3
+
+
+def test_get_last_homerun_multiple_in_same_game(db_session: Session):
+    """【新增】測試當天多發全壘打時，是否能正確找到最後一發。"""
+    player_name = "單場雙響砲"
+    game_date = datetime.date(2025, 8, 20)
+
+    # 準備資料
+    game = models.GameResultDB(
+        cpbl_game_id="MULTI_HR_GAME",
+        game_date=game_date,
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    summary = models.PlayerGameSummaryDB(game_id=game.id, player_name=player_name)
+    db_session.add(summary)
+    db_session.flush()
+
+    # 同場比賽的三個打席
+    ab1_hr = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        game_id=game.id,
+        sequence_in_game=1,
+        result_description_full="陽春全壘打",
+    )
+    ab2_out = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        game_id=game.id,
+        sequence_in_game=2,
+        result_description_full="飛球出局",
+    )
+    ab3_hr_last = models.AtBatDetailDB(
+        player_game_summary_id=summary.id,
+        game_id=game.id,
+        sequence_in_game=3,
+        result_description_full="再見全壘打",
+    )
+    db_session.add_all([ab1_hr, ab2_out, ab3_hr_last])
+    db_session.commit()
+
+    # 執行查詢
+    stats = analysis.get_stats_since_last_homerun(db_session, player_name)
+
+    # 驗證結果
+    assert stats is not None
+    # 驗證 last_homerun 物件本身是正確的
+    assert stats["last_homerun"].result_description_full == "再見全壘打"
+    assert stats["last_homerun"].sequence_in_game == 3
+    # 驗證回傳的 game_date 也是正確的
+    assert stats["game_date"] == game_date
+
+
+def test_get_last_homerun_no_data(db_session: Session):
+    """
+    重現 bug 的測試案例：
+    1. 建立有全壘打的球員 A 和沒有全壘打的球員 B。
+    2. 查詢球員 B 時，應回傳 None，而不是球員 A 的全壘打。
+    """
+    # 準備資料
+    game = models.GameResultDB(
+        cpbl_game_id="BUG_REPRO",
+        game_date=datetime.date(2025, 8, 1),
+        home_team="H",
+        away_team="A",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    # 球員 A (Homerun King)
+    summary_a = models.PlayerGameSummaryDB(game_id=game.id, player_name="Homerun King")
+    db_session.add(summary_a)
+    db_session.flush()
+    db_session.add(
+        models.AtBatDetailDB(
+            player_game_summary_id=summary_a.id,
+            game_id=game.id,
+            result_description_full="石破天驚的滿貫全壘打",
+        )
+    )
+
+    # 球員 B (No Homerun Guy)
+    summary_b = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="No Homerun Guy"
+    )
+    db_session.add(summary_b)
+    db_session.flush()
+    db_session.add(
+        models.AtBatDetailDB(
+            player_game_summary_id=summary_b.id,
+            game_id=game.id,
+            result_description_full="一個平凡的滾地球",
+        )
+    )
+    db_session.commit()
+
+    # 執行查詢
+    # 驗證查詢 Homerun King 能正確找到資料
+    stats_a = analysis.get_stats_since_last_homerun(db_session, "Homerun King")
+    assert stats_a is not None
+    assert stats_a["last_homerun"].player_summary.player_name == "Homerun King"
+
+    # 驗證查詢 No Homerun Guy 時，應回傳 None
+    stats_b = analysis.get_stats_since_last_homerun(db_session, "No Homerun Guy")
+    assert stats_b is None
 
 
 def test_find_at_bats_in_situation(db_session: Session):

@@ -45,20 +45,16 @@ def get_stats_since_last_homerun(
     db: Session, player_name: str
 ) -> Dict[str, Any] | None:
     """【修改】查詢指定球員的最後一發全壘打，並計算此後的相關數據。"""
+    # --- 修正第一個查詢：使用明確的 relationship join ---
     last_hr_at_bat = (
         db.query(models.AtBatDetailDB)
-        .join(models.PlayerGameSummaryDB)
-        .join(models.GameResultDB)
+        .join(models.AtBatDetailDB.player_summary)  # 明確 join
         .filter(models.PlayerGameSummaryDB.player_name == player_name)
         .filter(models.AtBatDetailDB.result_description_full.contains("全壘打"))
+        .join(models.PlayerGameSummaryDB.game)  # 明確 join
         .order_by(
             models.GameResultDB.game_date.desc(),
             models.AtBatDetailDB.sequence_in_game.desc(),
-        )
-        .options(
-            joinedload(models.AtBatDetailDB.player_summary).joinedload(
-                models.PlayerGameSummaryDB.game
-            )
         )
         .first()
     )
@@ -69,6 +65,7 @@ def get_stats_since_last_homerun(
     last_hr_game = last_hr_at_bat.player_summary.game
     last_hr_date = last_hr_game.game_date
 
+    # --- 修正第二個查詢：只計算全壘打日期之後的比賽 ---
     stats_since = (
         db.query(
             func.count(models.PlayerGameSummaryDB.game_id.distinct()).label(
@@ -79,17 +76,22 @@ def get_stats_since_last_homerun(
         .join(models.GameResultDB)
         .filter(
             models.PlayerGameSummaryDB.player_name == player_name,
-            models.GameResultDB.game_date >= last_hr_date,
+            # 將 >= 改為 > ，只計算嚴格晚於全壘打日期的比賽
+            models.GameResultDB.game_date > last_hr_date,
         )
         .one()
     )
+
+    # 如果 stats_since 查詢結果為 (None, None)，表示沒有後續比賽，手動設為 0
+    games_since_count = stats_since.games_since or 0
+    at_bats_since_count = stats_since.at_bats_since or 0
 
     return {
         "last_homerun": last_hr_at_bat,
         "game_date": last_hr_date,
         "days_since": (datetime.date.today() - last_hr_date).days,
-        "games_since": stats_since.games_since,
-        "at_bats_since": stats_since.at_bats_since,
+        "games_since": games_since_count,
+        "at_bats_since": at_bats_since_count,
     }
 
 

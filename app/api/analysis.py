@@ -54,8 +54,9 @@ def get_last_homerun(request: Request, player_name: str, db: Session = Depends(g
     """查詢指定球員的最後一轟，並回傳擴充後的統計數據。"""
     stats = analysis.get_stats_since_last_homerun(db, player_name)
     if not stats:
-        # [修改] 改用自訂例外
-        raise PlayerNotFoundException()
+        raise PlayerNotFoundException(
+            message=f"Player '{player_name}' not found or has no home run records"
+        )
     return stats
 
 
