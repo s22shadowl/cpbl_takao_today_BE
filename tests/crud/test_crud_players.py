@@ -1,16 +1,75 @@
 # tests/crud/test_crud_players.py
 
+import datetime
 from app import models
 from app.crud import games, players
 
 
+def test_create_or_update_player_career_stats(db_session):
+    """測試 create_or_update_player_career_stats 函式的建立與更新功能。"""
+    db = db_session
+
+    # 1. 測試建立新球員
+    player_stats_1 = {
+        "player_name": "生涯測試員",
+        "debut_date": datetime.date(2020, 1, 1),
+        "games_played": 100,
+        "homeruns": 10,
+        "avg": 0.300,
+    }
+    players.create_or_update_player_career_stats(db, player_stats_1)
+    db.commit()
+
+    # 驗證資料已建立
+    player_record = (
+        db.query(models.PlayerCareerStatsDB).filter_by(player_name="生涯測試員").first()
+    )
+    assert player_record is not None
+    assert player_record.games_played == 100
+    assert player_record.homeruns == 10
+    assert player_record.debut_date == datetime.date(2020, 1, 1)
+
+    # 2. 測試更新同一位球員
+    player_stats_2 = {
+        "player_name": "生涯測試員",
+        "games_played": 105,
+        "homeruns": 12,
+        "avg": 0.305,
+    }
+    players.create_or_update_player_career_stats(db, player_stats_2)
+    db.commit()
+
+    # 驗證資料已更新
+    player_record_updated = (
+        db.query(models.PlayerCareerStatsDB).filter_by(player_name="生涯測試員").first()
+    )
+    assert player_record_updated.games_played == 105
+    assert player_record_updated.homeruns == 12
+    assert player_record_updated.avg == 0.305
+    # 確認初登場日期沒有被意外清空
+    assert player_record_updated.debut_date == datetime.date(2020, 1, 1)
+    # 確認總筆數仍然為 1
+    assert db.query(models.PlayerCareerStatsDB).count() == 1
+
+
 def test_store_player_season_stats_and_history(db_session):
-    """【修改】測試 store_player_season_stats_and_history 函式"""
+    """測試 store_player_season_stats_and_history 函式"""
     db = db_session
 
     stats_list_1 = [
-        {"player_name": "測試員A", "team_name": "測試隊", "avg": 0.300},
-        {"player_name": "測試員B", "team_name": "測試隊", "avg": 0.250, "homeruns": 5},
+        {
+            "player_name": "測試員A",
+            "team_name": "測試隊",
+            "avg": 0.300,
+            "player_url": "http://example.com/a",
+        },
+        {
+            "player_name": "測試員B",
+            "team_name": "測試隊",
+            "avg": 0.250,
+            "homeruns": 5,
+            "player_url": "http://example.com/b",
+        },
     ]
 
     # 第一次執行
@@ -32,7 +91,13 @@ def test_store_player_season_stats_and_history(db_session):
 
     # 第二次執行，更新球員 A 的數據
     stats_list_2 = [
-        {"player_name": "測試員A", "team_name": "測試隊", "avg": 0.305, "hits": 10},
+        {
+            "player_name": "測試員A",
+            "team_name": "測試隊",
+            "avg": 0.305,
+            "hits": 10,
+            "player_url": "http://example.com/a",
+        },
     ]
     players.store_player_season_stats_and_history(db, stats_list_2)
     db.commit()
@@ -100,7 +165,7 @@ def test_store_player_game_data_with_details(db_session):
 
 
 def test_store_player_game_data_empty_list(db_session):
-    """[新增] 測試當傳入空的 all_players_data 列表時，函式能優雅地處理。"""
+    """測試當傳入空的 all_players_data 列表時，函式能優雅地處理。"""
     db = db_session
     game_info = {
         "cpbl_game_id": "TEST_EMPTY",

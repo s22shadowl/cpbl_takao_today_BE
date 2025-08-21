@@ -212,3 +212,60 @@ class PlayerSeasonStatsHistoryDB(Base, PlayerSeasonStatsMixin):
     id = Column(Integer, primary_key=True, index=True)
     player_name = Column(String, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+# --- 【新增】球員生涯數據 Mixin ---
+class PlayerCareerStatsMixin:
+    # 基本資訊
+    debut_date = Column(Date, nullable=True)
+    handedness = Column(String, nullable=True)  # 投打習慣
+
+    # 傳統數據
+    games_played = Column(Integer, default=0)
+    plate_appearances = Column(Integer, default=0)
+    at_bats = Column(Integer, default=0)
+    runs_scored = Column(Integer, default=0)
+    hits = Column(Integer, default=0)
+    singles = Column(Integer, default=0)
+    doubles = Column(Integer, default=0)
+    triples = Column(Integer, default=0)
+    homeruns = Column(Integer, default=0)
+    rbi = Column(Integer, default=0)
+    total_bases = Column(Integer, default=0)
+    strikeouts = Column(Integer, default=0)
+    walks = Column(Integer, default=0)
+    intentional_walks = Column(Integer, default=0)
+    hit_by_pitch = Column(Integer, default=0)
+    stolen_bases = Column(Integer, default=0)
+    caught_stealing = Column(Integer, default=0)
+    sacrifice_hits = Column(Integer, default=0)
+    sacrifice_flies = Column(Integer, default=0)
+    gidp = Column(Integer, default=0)
+    ground_outs = Column(Integer, default=0)
+    fly_outs = Column(Integer, default=0)
+
+    # 比率數據
+    avg = Column(REAL)
+    obp = Column(REAL)
+    slg = Column(REAL)
+    ops = Column(REAL)
+    go_ao_ratio = Column(REAL)
+    sb_percentage = Column(REAL)
+
+    # 進階數據
+    ops_plus = Column(REAL)
+    k_percentage = Column(REAL)
+    bb_percentage = Column(REAL)
+    bb_per_k = Column(REAL)
+    babip = Column(REAL)
+    bip_percentage = Column(REAL)
+
+
+# --- 【修改】擴充球員生涯數據表格 ---
+class PlayerCareerStatsDB(Base, PlayerCareerStatsMixin):
+    __tablename__ = "player_career_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_name = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

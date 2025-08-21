@@ -1,12 +1,15 @@
 # app/parsers/season_stats.py
 
 import logging
+from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from app.config import settings
 
 
 def parse_season_stats_page(html_content):
-    """從球隊成績頁面 HTML 中，解析出目標球員的球季累積數據。"""
+    """
+    從球隊成績頁面 HTML 中，解析出目標球員的球季累積數據，並包含球員個人頁面 URL。
+    """
     if not html_content:
         return []
     logging.info("正在解析球季累積數據...")
@@ -54,21 +57,30 @@ def parse_season_stats_page(html_content):
     player_data_rows = player_rows[1:]
 
     for row in player_data_rows:
+        player_name = ""
         try:
             cells = row.find_all("td")
             if not cells or len(cells) < 2:
                 continue
+
             player_name_cell = cells[0].find("a")
-            player_name = (
-                player_name_cell.text.strip()
-                if player_name_cell
-                else cells[0].text.strip()
+            if not player_name_cell:
+                continue
+
+            player_name = player_name_cell.text.strip()
+            relative_url = player_name_cell.get("href")
+
+            # 將相對路徑轉換為絕對 URL
+            full_url = (
+                urljoin("https://www.cpbl.com.tw/", relative_url)
+                if relative_url
+                else None
             )
-            # 【修改】移除對特定球員的篩選
-            # if player_name in settings.TARGET_PLAYER_NAMES:
+
             stats_data = {
                 "player_name": player_name,
-                "team_name": settings.TARGET_TEAM_NAME,  # 這部分邏輯可能需要後續調整
+                "player_url": full_url,  # 新增 player_url
+                "team_name": settings.TARGET_TEAM_NAME,
             }
             for i, header_text in enumerate(header_cells):
                 db_col_name = header_map.get(header_text)

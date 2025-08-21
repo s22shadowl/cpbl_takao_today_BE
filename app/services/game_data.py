@@ -15,6 +15,7 @@ from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
 from app.exceptions import ScraperError
 from app.browser import get_page  # [重構] 使用統一的 browser manager
+from app.services import player as player_service
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,15 @@ logger = logging.getLogger(__name__)
 # --- 主要爬蟲邏輯函式 ---
 
 
-def scrape_and_store_season_stats():
-    """抓取並儲存目標球員的球季累積數據。"""
+def scrape_and_store_season_stats(update_career_stats_for_all: bool = False):
+    """
+    抓取並儲存目標球隊的球季累積數據，並觸發生涯數據的更新。
+
+    Args:
+        update_career_stats_for_all (bool):
+            - True: 更新球隊頁面上所有球員的生涯數據。
+            - False (預設): 僅更新 settings.TARGET_PLAYER_NAMES 中指定的球員。
+    """
     club_no = settings.TEAM_CLUB_CODES.get(settings.TARGET_TEAM_NAME)
     if not club_no:
         logger.error(
@@ -54,6 +62,41 @@ def scrape_and_store_season_stats():
             db.close()
 
     logger.info("--- 球季累積數據抓取完畢 ---")
+
+    # --- 【修改】根據參數決定要更新哪些球員的生涯數據 ---
+    players_to_update_career_stats = []
+    if update_career_stats_for_all:
+        logger.info("模式：更新所有球員的生涯數據。")
+        players_to_update_career_stats = season_stats_list
+    else:
+        logger.info(f"模式：僅更新目標球員 {settings.TARGET_PLAYER_NAMES} 的生涯數據。")
+        players_to_update_career_stats = [
+            p
+            for p in season_stats_list
+            if p["player_name"] in settings.TARGET_PLAYER_NAMES
+        ]
+
+    if not players_to_update_career_stats:
+        logger.info("沒有需要更新生涯數據的球員，任務結束。")
+        return
+
+    logger.info(
+        f"--- 開始為 {len(players_to_update_career_stats)} 位球員觸發生涯數據更新 ---"
+    )
+    for player_stats in players_to_update_career_stats:
+        player_name = player_stats.get("player_name")
+        player_url = player_stats.get("player_url")
+        if player_name and player_url:
+            try:
+                player_service.scrape_and_store_player_career_stats(
+                    player_name=player_name, player_url=player_url
+                )
+                time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
+            except Exception as e:
+                logger.error(
+                    f"在為球員 [{player_name}] 更新生涯數據時失敗: {e}", exc_info=True
+                )
+    logger.info("--- 所有球員生涯數據更新流程已完成 ---")
 
 
 def _process_filtered_games(

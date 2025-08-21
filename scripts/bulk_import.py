@@ -1,69 +1,32 @@
-# scripts/bulk_import.py
-
 # 新版 bulk_import.py 使用步驟
-# 這個工具現在完全在 Docker 容器內運作，並分為兩個主要步驟。
+# 這個工具現在完全在 Docker 容器內運作。
 
-# 前置準備
-# 確認環境變數：確保你專案根目錄的 .env 檔案已根據前一個步驟的指示，正確設定了 STAGING_DATABASE_URL 和 PRODUCTION_DATABASE_URL。
+# --- 主要流程 ---
 
-# 啟動 Docker 服務：在開始之前，請確保你的 Docker 容器正在運行。
-
-# Bash
-
-# docker compose up -d
-# 步驟一：爬取資料至「暫存資料庫」
-# 此步驟會將指定日期範圍的歷史數據，爬取並儲存到 Docker 環境中的暫存資料庫（也就是 db 服務）。
-
+# 步驟一：爬取「比賽」資料至「暫存資料庫」
+# 此步驟會將指定日期範圍的歷史比賽數據，爬取並儲存到 Docker 環境中的暫存資料庫。
 # 指令：
-
-# Bash
-
 # docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start YYYY-MM-DD --end YYYY-MM-DD"
-# 範例 (爬取 2025 年整個 4 月的資料)：
-
-# Bash
-
+# 範例：
 # docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2025-03-01 --end 2025-04-30"
-# 腳本會開始逐日爬取資料，並將所有結果存入由 STAGING_DATABASE_URL 指定的資料庫。
+
+# --- 輔助流程 ---
+
+# (可選) 步驟 A：爬取「球員生涯」資料至「暫存資料庫」
+# 此步驟會爬取球隊名單上所有球員的生涯數據，並存入暫存資料庫。通常在 scrape 後執行，或用於手動更新所有球員的生涯數據。
+# 指令：
+# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape-career"
+
+# --- 最終流程 ---
 
 # 步驟二：[手動] 驗證暫存資料
-# 這是最關鍵的步驟。在將資料同步到雲端之前，你必須親自連線到暫存資料庫，確認資料的完整性與正確性。
+# 在將資料同步到雲端之前，你必須親自連線到暫存資料庫，確認資料的完整性與正確性。
+# 連線資訊應對應 .env 檔案中的 DATABASE_URL (主機為 localhost，Port 為 5432)。
 
-# 連線至資料庫：
-# 從你的本機電腦，使用任何 SQL 用戶端工具 (如 psql, DBeaver, TablePlus) 連線到 Docker 中的 PostgreSQL。連線資訊應對應 .env 檔案中的 DATABASE_URL (主機為 localhost，Port 為 5432)。
-
-# 使用 psql 的連線範例：
-
-# Bash
-
-# psql "postgresql://myuser:mypassword@localhost:5432/mydb"
-# 執行檢查：
-# 執行一些簡單的 SQL 查詢來驗證資料。
-
-# 查詢範例：
-
-# SQL
-
-# -- 檢查總共有多少筆打席紀錄
-# SELECT COUNT(*) FROM at_bat_details;
-
-# -- 查看最近一筆比賽是哪一天
-# SELECT game_date FROM game_results ORDER BY game_date DESC LIMIT 1;
-
-# -- 確認某一天是否有抓到球員數據
-# SELECT * FROM player_game_summaries WHERE game_date = '2025-04-30' LIMIT 5;
 # 步驟三：從「暫存資料庫」上傳至「生產資料庫」
 # 在確認步驟二的資料完全無誤後，執行此指令。它會讀取暫存資料庫中的所有資料，並將其同步 (merge) 至雲端上的生產資料庫。
-
 # 指令：
-
-# Bash
-
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python bulk_import.py upload"
-# 腳本會顯示來源與目標資料庫資訊，並開始同步。完成後，你的歷史數據就成功匯入生產環境了。
-
-# 總結資料流
-# CPBL 官網 -> (步驟一: scrape) -> 暫存資料庫 (db 容器) -> (步驟二: 手動驗證) -> (步驟三: upload) -> 生產資料庫 (雲端)
+# docker compose run --rm web sh -c "python -m scripts.bulk_import upload"
 
 import datetime
 import logging
@@ -76,7 +39,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
 
-# [修改] 直接從主應用程式的設定檔導入已初始化的 settings 物件
 from app.config import settings, Settings
 from app.core import fetcher
 from app.parsers import schedule
@@ -88,6 +50,7 @@ from app.models import (
     AtBatDetailDB,
     PlayerSeasonStatsDB,
     PlayerSeasonStatsHistoryDB,
+    PlayerCareerStatsDB,
 )
 from app.logging_config import setup_logging
 
@@ -182,7 +145,6 @@ def run_scrape(settings: Settings, start_date: date, end_date: date):
         current_day_games = games_by_date.get(date_str, [])
 
         try:
-            # [修改] 移除 db_session 參數，恢復對 scraper 函式的原始呼叫方式
             scrape_single_day(
                 specific_date=date_str,
                 games_for_day=current_day_games,
@@ -195,9 +157,20 @@ def run_scrape(settings: Settings, start_date: date, end_date: date):
         time.sleep(settings.BULK_IMPORT_DELAY_SECONDS)
 
     logger.info("所有比賽資料處理完畢，正在更新當前球季累積數據...")
-    # [修改] 移除 db_session 參數，恢復對 scraper 函式的原始呼叫方式
-    scrape_and_store_season_stats()
+    # 【修改】明確傳入參數，確保 bulk import 會更新所有球員的生涯數據
+    scrape_and_store_season_stats(update_career_stats_for_all=True)
     logger.info("--- 步驟 1: 所有日期的批次爬取任務已完成 ---")
+
+
+# --- `scrape-career` 指令函式 ---
+def run_scrape_career_stats(settings: Settings):
+    """
+    執行輔助步驟：爬取球隊所有球員的生涯數據。
+    """
+    logger.info("--- 步驟 A: 開始爬取所有球員的生涯數據 ---")
+    # 【修改】簡化邏輯，直接呼叫核心函式並傳入參數
+    scrape_and_store_season_stats(update_career_stats_for_all=True)
+    logger.info("--- 步驟 A: 所有球員生涯數據更新完畢 ---")
 
 
 # --- `upload` 指令函式 ---
@@ -226,6 +199,7 @@ def run_upload(settings: Settings):
         AtBatDetailDB,
         PlayerSeasonStatsDB,
         PlayerSeasonStatsHistoryDB,
+        PlayerCareerStatsDB,
     ]
 
     try:
@@ -268,14 +242,12 @@ def run_upload(settings: Settings):
 
 # --- 主程式進入點 ---
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="CPBL 歷史資料批次處理工具。分為兩步驟：1. scrape (爬取至暫存DB), 2. upload (從暫存DB上傳至生產DB)。"
-    )
+    parser = argparse.ArgumentParser(description="CPBL 歷史資料批次處理工具。")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     parser_scrape = subparsers.add_parser(
         "scrape",
-        help="執行步驟一：爬取資料並儲存至 STAGING_DATABASE_URL 指定的資料庫。",
+        help="執行步驟一：爬取比賽資料並儲存至 STAGING_DATABASE_URL 指定的資料庫。",
     )
     parser_scrape.add_argument(
         "--start",
@@ -288,6 +260,11 @@ if __name__ == "__main__":
         default=date.today(),
         help="爬取結束日期 (格式: YYYY-MM-DD)，預設為今天。",
         type=lambda s: datetime.datetime.strptime(s, "%Y-%m-%d").date(),
+    )
+
+    parser_scrape_career = subparsers.add_parser(
+        "scrape-career",
+        help="執行輔助步驟：爬取所有球員的生涯數據至 STAGING_DATABASE_URL。",
     )
 
     parser_upload = subparsers.add_parser(
@@ -307,6 +284,14 @@ if __name__ == "__main__":
             logger.error("錯誤：開始日期不能晚於結束日期。")
         else:
             run_scrape(settings=settings, start_date=args.start, end_date=args.end)
+
+    elif args.command == "scrape-career":
+        if not settings.STAGING_DATABASE_URL:
+            logger.error(
+                "錯誤：環境變數 STAGING_DATABASE_URL 未設定，無法執行 scrape-career。"
+            )
+            exit(1)
+        run_scrape_career_stats(settings=settings)
 
     elif args.command == "upload":
         if not settings.STAGING_DATABASE_URL or not settings.PRODUCTION_DATABASE_URL:

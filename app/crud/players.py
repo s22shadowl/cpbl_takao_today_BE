@@ -9,11 +9,56 @@ from sqlalchemy.inspection import inspect
 from app import models
 
 
+def create_or_update_player_career_stats(db: Session, player_stats: Dict[str, Any]):
+    """
+    新增或更新單一球員的生涯數據。
+
+    這個函式會根據 player_name 檢查球員是否存在於 PlayerCareerStatsDB。
+    如果存在，則更新其生涯數據；如果不存在，則建立一筆新紀錄。
+
+    Args:
+        db: SQLAlchemy Session 物件。
+        player_stats: 一個包含球員姓名和其生涯數據的字典。
+                      預期鍵值包含 'player_name' 及 PlayerCareerStatsMixin 中定義的欄位。
+    """
+    player_name = player_stats.get("player_name")
+    if not player_name:
+        logging.warning("缺少 player_name，無法新增或更新生涯數據。")
+        return
+
+    try:
+        # 檢查球員是否已存在
+        existing_player = (
+            db.query(models.PlayerCareerStatsDB)
+            .filter(models.PlayerCareerStatsDB.player_name == player_name)
+            .first()
+        )
+
+        if existing_player:
+            # 更新現有紀錄
+            logging.info(f"更新球員 [{player_name}] 的生涯數據...")
+            for key, value in player_stats.items():
+                if key != "player_name":
+                    setattr(existing_player, key, value)
+        else:
+            # 建立新紀錄
+            logging.info(f"為球員 [{player_name}] 建立新的生涯數據紀錄...")
+            new_player = models.PlayerCareerStatsDB(**player_stats)
+            db.add(new_player)
+
+        # db.commit() # 注意：commit 操作應由 service 層管理
+        logging.info(f"已準備好球員 [{player_name}] 的生涯數據待提交。")
+
+    except Exception as e:
+        logging.error(f"處理球員 [{player_name}] 的生涯數據時出錯: {e}", exc_info=True)
+        raise
+
+
 def store_player_season_stats_and_history(
     db: Session, season_stats_list: List[Dict[str, Any]]
 ):
     """
-    【修改】儲存最新的球員球季數據，並同時在歷史紀錄表中新增一筆快照。
+    儲存最新的球員球季數據，並同時在歷史紀錄表中新增一筆快照。
     """
     if not season_stats_list:
         return
@@ -30,19 +75,25 @@ def store_player_season_stats_and_history(
         ).delete(synchronize_session=False)
 
         new_stats_objects = []
-        for stats in season_stats_list:
-            stats["data_retrieved_date"] = datetime.date.today().strftime("%Y-%m-%d")
-            new_stats_objects.append(models.PlayerSeasonStatsDB(**stats))
+        for stats_data in season_stats_list:
+            # 【修正】複製字典並移除模型中不存在的 'player_url' 鍵
+            stats_for_db = stats_data.copy()
+            stats_for_db.pop("player_url", None)
+            stats_for_db["data_retrieved_date"] = datetime.date.today().strftime(
+                "%Y-%m-%d"
+            )
+            new_stats_objects.append(models.PlayerSeasonStatsDB(**stats_for_db))
         db.add_all(new_stats_objects)
 
         # 2. 新增至 PlayerSeasonStatsHistoryDB (日誌式)
         history_stats_objects = []
-        for stats in season_stats_list:
-            # 移除 'updated_at' 欄位，因為 history 表沒有這個欄位
-            stats_copy = stats.copy()
-            stats_copy.pop("updated_at", None)
+        for stats_data in season_stats_list:
+            # 【修正】複製字典並移除模型中不存在的鍵
+            stats_for_history = stats_data.copy()
+            stats_for_history.pop("player_url", None)
+            stats_for_history.pop("updated_at", None)
             history_stats_objects.append(
-                models.PlayerSeasonStatsHistoryDB(**stats_copy)
+                models.PlayerSeasonStatsHistoryDB(**stats_for_history)
             )
         db.add_all(history_stats_objects)
 
@@ -58,7 +109,7 @@ def store_player_game_data(
     db: Session, game_id: int, all_players_data: List[Dict[str, Any]]
 ):
     """
-    【重構】準備多位球員的單場總結與完整的逐打席記錄以供儲存。
+    準備多位球員的單場總結與完整的逐打席記錄以供儲存。
     採用批次查詢優化，避免 N+1 問題。
     """
     if not all_players_data:
@@ -69,7 +120,6 @@ def store_player_game_data(
 
     try:
         # --- 效能優化：批次查詢 ---
-        # 1. 一次性獲取此場比賽所有已存在的球員摘要
         player_names_in_request = [
             p["summary"]["player_name"]
             for p in all_players_data
@@ -83,7 +133,6 @@ def store_player_game_data(
             s.player_name: s for s in existing_summaries_query.all()
         }
 
-        # 2. 預先載入所有摘要的 ID，以準備查詢打席紀錄
         db.flush()
         summary_ids = [s.id for s in existing_summaries_map.values()]
         newly_created_summaries = [
@@ -93,7 +142,6 @@ def store_player_game_data(
         ]
         summary_ids.extend([s.id for s in newly_created_summaries if s.id])
 
-        # 3. 一次性獲取所有相關的已存在打席紀錄
         existing_details_map = {}
         if summary_ids:
             existing_details_query = db.query(models.AtBatDetailDB).filter(
@@ -117,7 +165,6 @@ def store_player_game_data(
                 k: v for k, v in summary_dict.items() if k in summary_cols
             }
 
-            # 使用預先載入的 map 進行判斷
             summary_orm_object = existing_summaries_map.get(player_name)
             if summary_orm_object:
                 for key, value in filtered_summary.items():
@@ -126,7 +173,7 @@ def store_player_game_data(
                 summary_orm_object = models.PlayerGameSummaryDB(**filtered_summary)
                 db.add(summary_orm_object)
 
-            db.flush()  # 確保新建立的 summary 獲得 ID
+            db.flush()
             player_game_summary_id = summary_orm_object.id
 
             if not player_game_summary_id:
@@ -142,8 +189,6 @@ def store_player_game_data(
                     k: v for k, v in detail_dict.items() if k in detail_cols
                 }
                 sequence = detail_dict.get("sequence_in_game")
-
-                # 使用預先載入的 map 進行判斷
                 detail_key = (player_game_summary_id, sequence)
                 existing_detail = existing_details_map.get(detail_key)
 

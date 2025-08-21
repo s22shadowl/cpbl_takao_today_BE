@@ -19,12 +19,25 @@ def team_score_html_content():
 
 
 def test_parse_season_stats_page(team_score_html_content):
-    """【修改】驗證函式能解析出所有球員，而不只是特定目標球員"""
+    """驗證函式能解析出所有球員，並包含正確的 player_url。"""
     result = season_stats.parse_season_stats_page(team_score_html_content)
     assert isinstance(result, list)
-    # 斷言解析出的球員數量應大於等於我們已知的目標球員數量
-    assert len(result) >= len(settings.TARGET_PLAYER_NAMES)
+    # 斷言解析出的球員數量應大於 0
+    assert len(result) > 0
 
-    # 驗證所有已知的目標球員都包含在解析結果中
+    # --- 驗證第一個球員的資料結構 ---
+    first_player = result[0]
+    assert "player_name" in first_player
+    assert "player_url" in first_player
+    assert isinstance(first_player["player_name"], str)
+    assert isinstance(first_player["player_url"], str)
+
+    # --- 驗證 player_url 是否為完整的絕對 URL ---
+    assert first_player["player_url"].startswith("https://www.cpbl.com.tw")
+    assert "team/person" in first_player["player_url"]
+
+    # --- 維持原有的球員名稱驗證 ---
     parsed_player_names = {p["player_name"] for p in result}
-    assert set(settings.TARGET_PLAYER_NAMES).issubset(parsed_player_names)
+    # 假設 settings.TARGET_PLAYER_NAMES 至少有一個目標球員
+    if settings.TARGET_PLAYER_NAMES:
+        assert set(settings.TARGET_PLAYER_NAMES).issubset(parsed_player_names)
