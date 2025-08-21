@@ -25,6 +25,14 @@ class AtBatDetail(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+# --- 【新增】為 situational-at-bats 擴充的回應模型 ---
+class SituationalAtBatDetail(AtBatDetail):
+    """擴充 AtBatDetail，增加比賽日期與對戰對手資訊。"""
+
+    game_date: datetime.date = Field(..., description="比賽日期")
+    opponent_team: str = Field(..., description="對戰球隊")
+
+
 class PlayerGameSummary(BaseModel):
     id: int
     game_id: int

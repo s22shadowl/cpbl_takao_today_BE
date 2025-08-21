@@ -284,16 +284,19 @@ def test_get_last_homerun_not_found(client: TestClient):
 
 
 def test_get_situational_at_bats(client: TestClient, db_session: Session):
-    """測試使用 Enum 查詢不同壘上情境的打席紀錄。"""
+    """【修改】測試查詢不同壘上情境的打席紀錄，並驗證擴充的回應欄位。"""
+    game_date = datetime.date(2025, 8, 8)
     game = models.GameResultDB(
         cpbl_game_id="G_SIT",
-        game_date=datetime.date(2025, 8, 8),
+        game_date=game_date,
         home_team="H",
         away_team="A",
     )
     db_session.add(game)
     db_session.flush()
-    summary = models.PlayerGameSummaryDB(game_id=game.id, player_name="情境男")
+    summary = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="情境男", team_name="H"
+    )
     db_session.add(summary)
     db_session.flush()
     ab1 = models.AtBatDetailDB(
@@ -324,6 +327,9 @@ def test_get_situational_at_bats(client: TestClient, db_session: Session):
     data_sp = response_sp.json()
     assert len(data_sp) == 1
     assert data_sp[0]["result_short"] == "滿貫砲"
+    # 【新增】驗證擴充的欄位
+    assert data_sp[0]["game_date"] == game_date.isoformat()
+    assert data_sp[0]["opponent_team"] == "A"
 
 
 def test_get_streaks_by_specific_player_names(

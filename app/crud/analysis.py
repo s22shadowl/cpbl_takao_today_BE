@@ -107,6 +107,12 @@ def find_at_bats_in_situation(
         db.query(models.AtBatDetailDB)
         .join(models.PlayerGameSummaryDB)
         .join(models.GameResultDB)
+        # 【修改】使用 joinedload 預先載入關聯的 game 和 player_summary 物件
+        .options(
+            joinedload(models.AtBatDetailDB.player_summary).joinedload(
+                models.PlayerGameSummaryDB.game
+            )
+        )
         .filter(models.PlayerGameSummaryDB.player_name == player_name)
     )
 
