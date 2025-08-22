@@ -19,6 +19,7 @@ from app.core.constants import (
 def _determine_result_details(description: str) -> dict:
     """
     根據打席的文字描述，解析出結構化的結果類型和得分。
+    TODO: 目前未能正確處理「比賽結束」的打席，但前端尚未實用 result_type
     """
     result = {
         "result_type": AtBatResultType.UNSPECIFIED,

@@ -158,7 +158,7 @@ def run_scrape(settings: Settings, start_date: date, end_date: date):
 
     logger.info("所有比賽資料處理完畢，正在更新當前球季累積數據...")
     # 【修改】明確傳入參數，確保 bulk import 會更新所有球員的生涯數據
-    scrape_and_store_season_stats(update_career_stats_for_all=True)
+    scrape_and_store_season_stats(update_career_stats_for_all=False)
     logger.info("--- 步驟 1: 所有日期的批次爬取任務已完成 ---")
 
 

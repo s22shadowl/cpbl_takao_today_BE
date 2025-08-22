@@ -8,13 +8,14 @@ from typing import Dict, List, Optional
 
 from app.crud import games, players
 from app.utils.state_machine import _update_outs_count, _update_runners_state
+from app.utils.parsing_helpers import is_formal_pa
 
 from app.config import settings
 from app.core import fetcher
 from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
 from app.exceptions import ScraperError
-from app.browser import get_page  # [重構] 使用統一的 browser manager
+from app.browser import get_page
 from app.services import player as player_service
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,6 @@ def scrape_and_store_season_stats(update_career_stats_for_all: bool = False):
 
     logger.info("--- 球季累積數據抓取完畢 ---")
 
-    # --- 【修改】根據參數決定要更新哪些球員的生涯數據 ---
     players_to_update_career_stats = []
     if update_career_stats_for_all:
         logger.info("模式：更新所有球員的生涯數據。")
@@ -164,7 +164,6 @@ def _process_filtered_games(
                 db.close()
         return
 
-    # [重構] 使用統一的 browser manager，並設定 headless=False
     with get_page(headless=False) as page:
         for game_info in games_to_process:
             db = SessionLocal()
@@ -243,104 +242,108 @@ def _process_filtered_games(
                         continue
 
                     for half_inning_selector in ["section.top", "section.bot"]:
+                        batting_team = (
+                            game_info["away_team"]
+                            if half_inning_selector == "section.top"
+                            else game_info["home_team"]
+                        )
+
                         half_inning_section = active_inning_content.locator(
                             half_inning_selector
                         )
+
                         if half_inning_section.count() > 0:
-                            event_containers = half_inning_section.locator(
-                                "div.item.play"
-                            )
-                            container_count = event_containers.count()
-
-                            logger.info(
-                                f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {container_count} 個打席容器，準備展開..."
-                            )
-
-                            for i in range(container_count):
-                                item_container = event_containers.nth(i)
-
-                                bell_button = item_container.locator(
-                                    "div.no-pitch-action-remind"
+                            # 【FIX】修正邏輯：如果 target_teams 未指定，則處理所有隊伍；否則只處理目標隊伍。
+                            if not target_teams or batting_team in target_teams:
+                                event_containers = half_inning_section.locator(
+                                    "div.item.play"
                                 )
-                                event_button = item_container.locator(
-                                    "div.batter_event"
+                                container_count = event_containers.count()
+
+                                logger.info(
+                                    f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {container_count} 個打席容器，準備展開..."
                                 )
-                                event_anchor = event_button.locator("a")
 
-                                target_to_click = None
+                                for i in range(container_count):
+                                    item_container = event_containers.nth(i)
 
-                                anchor_text = (
-                                    event_anchor.text_content(timeout=500) or ""
-                                )
-                                if not anchor_text.strip() and bell_button.count() > 0:
-                                    target_to_click = bell_button
-                                    logger.debug(
-                                        f"處理第 {i + 1} 個容器：檢測到無投球事件（鈴鐺）模式。"
+                                    bell_button = item_container.locator(
+                                        "div.no-pitch-action-remind"
                                     )
-                                else:
-                                    target_to_click = event_button
-                                    logger.debug(
-                                        f"處理第 {i + 1} 個容器：檢測到標準打擊結果按鈕模式。"
+                                    event_button = item_container.locator(
+                                        "div.batter_event"
                                     )
+                                    event_anchor = event_button.locator("a")
 
-                                if not target_to_click:
-                                    logger.warning(
-                                        f"在第 {i + 1} 個容器中找不到任何可點擊的目標按鈕。"
-                                    )
-                                    continue
+                                    target_to_click = None
+                                    anchor_text = (
+                                        event_anchor.text_content(timeout=500) or ""
+                                    ).strip()
 
-                                for attempt in range(2):
-                                    try:
-                                        logger.debug(
-                                            f"準備點擊第 {i + 1}/{container_count} 個容器中的按鈕 (嘗試 {attempt + 1})..."
-                                        )
-                                        target_to_click.scroll_into_view_if_needed()
-                                        page.wait_for_timeout(100)
-                                        target_to_click.hover(force=True, timeout=3000)
-                                        page.wait_for_timeout(100)
-                                        target_to_click.click(force=True, timeout=2000)
-                                        logger.debug(f"成功點擊第 {i + 1} 個按鈕。")
-                                        break
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"點擊第 {i + 1} 個按鈕時失敗 (嘗試 {attempt + 1}): {e}",
-                                            exc_info=False,
-                                        )
-                                        if attempt == 1:
-                                            logger.error(
-                                                f"重試多次後，點擊第 {i + 1} 個按鈕仍然失敗。"
+                                    if anchor_text:
+                                        target_to_click = event_button
+                                    elif bell_button.count() > 0:
+                                        target_to_click = bell_button
+
+                                    if not target_to_click:
+                                        continue
+
+                                    for attempt in range(2):
+                                        try:
+                                            target_to_click.scroll_into_view_if_needed()
+                                            page.wait_for_timeout(100)
+                                            target_to_click.hover(
+                                                force=True, timeout=3000
                                             )
+                                            page.wait_for_timeout(100)
+                                            target_to_click.click(
+                                                force=True, timeout=2000
+                                            )
+                                            break
+                                        except Exception as e:
+                                            logger.warning(
+                                                f"點擊第 {i + 1} 個按鈕時失敗 (嘗試 {attempt + 1}): {e}",
+                                                exc_info=False,
+                                            )
+                                            if attempt == 1:
+                                                logger.error(
+                                                    f"重試多次後，點擊第 {i + 1} 個按鈕仍然失敗。"
+                                                )
 
-                            logger.debug("所有點擊操作完成，開始驗證展開結果...")
-                            num_expanded_details = half_inning_section.locator(
-                                "div.item.play:has(div.detail_item)"
-                            ).count()
-                            logger.info(
-                                f"驗證展開結果：此半局共有 {container_count} 個打席容器，其中 {num_expanded_details} 個已含有詳細內容。"
-                            )
+                                # 【最終修正】將解析邏輯移入半局過濾區塊內
+                                inning_html = half_inning_section.inner_html()
+                                parsed_events = live.parse_active_inning_details(
+                                    inning_html, inning_num
+                                )
+                                full_game_events.extend(parsed_events)
+                            else:
+                                logger.info(
+                                    f"跳過第 {inning_num} 局 [{half_inning_selector}]，進攻方 ({batting_team}) 非目標球隊。"
+                                )
 
-                    inning_html = active_inning_content.inner_html()
-                    parsed_events = live.parse_active_inning_details(
-                        inning_html, inning_num
-                    )
-                    full_game_events.extend(parsed_events)
-
-                all_at_bats_details_enriched = []
                 player_pa_counter = {
                     p["summary"]["player_name"]: 0 for p in all_players_data
                 }
 
+                all_at_bats_details_enriched = []
                 inning_state = {}
-                for event in full_game_events:
+                for i, event in enumerate(full_game_events):
                     inning = event.get("inning")
+
                     if inning not in inning_state:
                         inning_state[inning] = {
                             "outs": 0,
                             "runners": [None, None, None],
                         }
+
+                    if inning_state[inning]["outs"] >= 3:
+                        inning_state[inning]["outs"] = 0
+                        inning_state[inning]["runners"] = [None, None, None]
+
                     current_outs = inning_state[inning]["outs"]
                     current_runners = inning_state[inning]["runners"]
-                    outs_before = current_outs
+
+                    event["outs_before"] = current_outs
                     runners_str_list = [
                         base
                         for base, runner in zip(
@@ -348,7 +351,7 @@ def _process_filtered_games(
                         )
                         if runner
                     ]
-                    runners_on_base_before = (
+                    event["runners_on_base_before"] = (
                         "、".join(runners_str_list) + "有人"
                         if runners_str_list
                         else "壘上無人"
@@ -360,50 +363,56 @@ def _process_filtered_games(
                             player_pa_counter[hitter] = 0
                         player_pa_counter[hitter] += 1
                         event["sequence_in_game"] = player_pa_counter[hitter]
-                        event["outs_before"] = outs_before
-                        event["runners_on_base_before"] = runners_on_base_before
-                        all_at_bats_details_enriched.append(event)
+
+                    all_at_bats_details_enriched.append(event)
 
                     desc = event.get("description", "")
-                    inning_state[inning]["outs"] = _update_outs_count(
-                        desc, current_outs
-                    )
-                    inning_state[inning]["runners"] = _update_runners_state(
-                        current_runners, event.get("hitter_name"), desc
-                    )
-                    if inning_state[inning]["outs"] >= 3:
-                        inning_state[inning + 1] = {
-                            "outs": 0,
-                            "runners": [None, None, None],
-                        }
 
-                for player_data in all_players_data:
-                    player_name = player_data["summary"]["player_name"]
-                    player_live_details = [
-                        d
-                        for d in all_at_bats_details_enriched
-                        if d.get("hitter_name") == player_name
-                    ]
-                    player_data["at_bats_details"] = []
-                    for i, result_short in enumerate(player_data["at_bats_list"]):
-                        seq = i + 1
-                        merged_at_bat = {
-                            "result_short": result_short,
-                            "sequence_in_game": seq,
-                        }
-                        detail_match = next(
-                            (
-                                d
-                                for d in player_live_details
-                                if d.get("sequence_in_game") == seq
-                            ),
-                            None,
-                        )
-                        if detail_match:
-                            merged_at_bat.update(detail_match)
-                        player_data["at_bats_details"].append(merged_at_bat)
+                    new_outs = _update_outs_count(desc, current_outs)
+                    new_runners = _update_runners_state(current_runners, hitter, desc)
 
-                players.store_player_game_data(db, game_id_in_db, all_players_data)
+                    inning_state[inning]["outs"] = new_outs
+                    inning_state[inning]["runners"] = new_runners
+
+                player_data_map = {
+                    p["summary"]["player_name"]: p for p in all_players_data
+                }
+
+                for player_name, p_data in player_data_map.items():
+                    p_data["at_bats_details"] = []
+                    p_data["box_score_iterator"] = iter(p_data.get("at_bats_list", []))
+
+                for live_event in all_at_bats_details_enriched:
+                    hitter_name = live_event.get("hitter_name")
+
+                    if hitter_name and hitter_name in player_data_map:
+                        player_data = player_data_map[hitter_name]
+                        description = live_event.get("description", "")
+
+                        if is_formal_pa(description):
+                            try:
+                                result_short_from_box = next(
+                                    player_data["box_score_iterator"]
+                                )
+                                live_event["result_short"] = result_short_from_box
+                            except StopIteration:
+                                logger.warning(
+                                    f"資料不一致：球員 [{hitter_name}] 的 Live Text 事件比 Box Score 打席數多。"
+                                )
+                                live_event["result_short"] = "未知"
+                        else:
+                            live_event["result_short"] = "無"
+
+                        player_data["at_bats_details"].append(live_event)
+
+                final_player_data_list = list(player_data_map.values())
+                for p_data in final_player_data_list:
+                    if "box_score_iterator" in p_data:
+                        del p_data["box_score_iterator"]
+
+                players.store_player_game_data(
+                    db, game_id_in_db, final_player_data_list
+                )
                 db.commit()
                 logger.info(
                     f"成功提交比賽 {game_info.get('cpbl_game_id')} 的所有資料到資料庫。"
