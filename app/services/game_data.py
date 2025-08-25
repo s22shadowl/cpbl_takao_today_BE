@@ -3,12 +3,9 @@
 import datetime
 import time
 import logging
-from playwright.sync_api import expect
 from typing import Dict, List, Optional
 
-from app.crud import games, players
 from app.models import AtBatResultType
-from app.utils.state_machine import _update_outs_count, _update_runners_state
 from app.utils.parsing_helpers import is_formal_pa, map_result_short_to_type
 
 from app.config import settings
@@ -17,7 +14,9 @@ from app.parsers import box_score, live, schedule, season_stats
 from app.db import SessionLocal
 from app.exceptions import ScraperError
 from app.browser import get_page
-from app.services import player as player_service
+from app.services import player as player_service, data_persistence
+from app.services.browser_operator import BrowserOperator
+from app.services.game_state_machine import GameStateMachine
 
 
 logger = logging.getLogger(__name__)
@@ -55,6 +54,9 @@ def scrape_and_store_season_stats(update_career_stats_for_all: bool = False):
 
     db = SessionLocal()
     try:
+        # [重構] 雖然此處也可移至 data_persistence，但因其邏輯單純且僅此一處使用，暫時保留
+        from app.crud import players
+
         players.store_player_season_stats_and_history(db, season_stats_list)
         db.commit()
     except Exception:
@@ -123,13 +125,11 @@ def _process_filtered_games(
                     f"[E2E] 正在儲存假的比賽資料: {game_info.get('cpbl_game_id')}"
                 )
 
-                game_date = datetime.datetime.strptime(
+                game_info["game_date_obj"] = datetime.datetime.strptime(
                     game_info["game_date"], "%Y-%m-%d"
                 ).date()
-                games.delete_game_if_exists(
-                    db, game_info.get("cpbl_game_id"), game_date
-                )
-                game_id_in_db = games.create_game_and_get_id(db, game_info)
+
+                game_id_in_db = data_persistence.prepare_game_storage(db, game_info)
 
                 if not game_id_in_db:
                     logger.warning(
@@ -154,7 +154,9 @@ def _process_filtered_games(
                         ],
                     }
                 ]
-                players.store_player_game_data(db, game_id_in_db, fake_player_data)
+                data_persistence.commit_player_game_data(
+                    db, game_id_in_db, fake_player_data
+                )
 
             db.commit()
             logger.info("[E2E] 成功提交所有假的比賽資料。")
@@ -167,6 +169,8 @@ def _process_filtered_games(
         return
 
     with get_page(headless=False) as page:
+        browser_operator = BrowserOperator(page)
+
         for game_info in games_to_process:
             db = SessionLocal()
             try:
@@ -178,14 +182,13 @@ def _process_filtered_games(
 
                 logger.info(f"處理比賽 (CPBL ID: {game_info.get('cpbl_game_id')})...")
 
-                game_date = datetime.datetime.strptime(
+                # 預先處理日期物件，供後續使用
+                game_info["game_date_obj"] = datetime.datetime.strptime(
                     game_info["game_date"], "%Y-%m-%d"
                 ).date()
-                games.delete_game_if_exists(
-                    db, game_info.get("cpbl_game_id"), game_date
-                )
-                game_id_in_db = games.create_game_and_get_id(db, game_info)
 
+                # [重構] 透過 DataPersistence 服務處理資料庫準備
+                game_id_in_db = data_persistence.prepare_game_storage(db, game_info)
                 if not game_id_in_db:
                     continue
 
@@ -193,188 +196,42 @@ def _process_filtered_games(
                 if not box_score_url:
                     continue
 
-                page.goto(box_score_url, timeout=settings.PLAYWRIGHT_TIMEOUT)
-                page.wait_for_selector(
-                    "div.GameBoxDetail",
-                    state="visible",
-                    timeout=settings.PLAYWRIGHT_TIMEOUT,
+                box_score_html = browser_operator.navigate_and_get_box_score_content(
+                    box_score_url
                 )
                 all_players_data = box_score.parse_box_score_page(
-                    page.content(), target_teams=target_teams
+                    box_score_html, target_teams=target_teams
                 )
                 if not all_players_data:
                     continue
 
                 live_url = box_score_url.replace("/box?", "/box/live?")
-                page.goto(
-                    live_url, wait_until="load", timeout=settings.PLAYWRIGHT_TIMEOUT
+                all_half_innings_html = browser_operator.extract_live_events_html(
+                    live_url
                 )
-                page.wait_for_selector(
-                    "div.InningPlaysGroup", timeout=settings.PLAYWRIGHT_TIMEOUT
-                )
-
-                logger.info("注入 CSS 以隱藏所有 iframe...")
-                try:
-                    page.add_style_tag(content="iframe { display: none !important; }")
-                    logger.debug("CSS 注入成功。")
-                except Exception as e:
-                    logger.error(f"注入 CSS 時發生錯誤: {e}")
 
                 full_game_events = []
-                inning_buttons = page.locator(
-                    "div.InningPlaysGroup div.tabs > ul > li"
-                ).all()
-
-                for i, inning_li in enumerate(inning_buttons):
-                    inning_num = i + 1
-                    logger.info(f"處理第 {inning_num} 局...")
-
-                    inning_li.click()
-
-                    try:
-                        active_inning_content = page.locator(
-                            "div.InningPlaysGroup div.tab_cont.active"
-                        )
-                        expect(active_inning_content).to_be_visible(timeout=5000)
-                        logger.debug(f"第 {inning_num} 局內容已可見。")
-                    except Exception as e:
-                        logger.error(
-                            f"等待第 {inning_num} 局內容可見時超時或失敗: {e}，將跳過此局。"
-                        )
-                        continue
-
-                    for half_inning_selector in ["section.top", "section.bot"]:
-                        batting_team = (
-                            game_info["away_team"]
-                            if half_inning_selector == "section.top"
-                            else game_info["home_team"]
-                        )
-
-                        half_inning_section = active_inning_content.locator(
-                            half_inning_selector
-                        )
-
-                        if half_inning_section.count() > 0:
-                            # 【FIX】修正邏輯：如果 target_teams 未指定，則處理所有隊伍；否則只處理目標隊伍。
-                            if not target_teams or batting_team in target_teams:
-                                event_containers = half_inning_section.locator(
-                                    "div.item.play"
-                                )
-                                container_count = event_containers.count()
-
-                                logger.info(
-                                    f"處理第 {inning_num} 局 [{half_inning_selector}]，找到 {container_count} 個打席容器，準備展開..."
-                                )
-
-                                for i in range(container_count):
-                                    item_container = event_containers.nth(i)
-
-                                    bell_button = item_container.locator(
-                                        "div.no-pitch-action-remind"
-                                    )
-                                    event_button = item_container.locator(
-                                        "div.batter_event"
-                                    )
-                                    event_anchor = event_button.locator("a")
-
-                                    target_to_click = None
-                                    anchor_text = (
-                                        event_anchor.text_content(timeout=500) or ""
-                                    ).strip()
-
-                                    if anchor_text:
-                                        target_to_click = event_button
-                                    elif bell_button.count() > 0:
-                                        target_to_click = bell_button
-
-                                    if not target_to_click:
-                                        continue
-
-                                    for attempt in range(2):
-                                        try:
-                                            target_to_click.scroll_into_view_if_needed()
-                                            page.wait_for_timeout(100)
-                                            target_to_click.hover(
-                                                force=True, timeout=3000
-                                            )
-                                            page.wait_for_timeout(100)
-                                            target_to_click.click(
-                                                force=True, timeout=2000
-                                            )
-                                            break
-                                        except Exception as e:
-                                            logger.warning(
-                                                f"點擊第 {i + 1} 個按鈕時失敗 (嘗試 {attempt + 1}): {e}",
-                                                exc_info=False,
-                                            )
-                                            if attempt == 1:
-                                                logger.error(
-                                                    f"重試多次後，點擊第 {i + 1} 個按鈕仍然失敗。"
-                                                )
-
-                                # 【最終修正】將解析邏輯移入半局過濾區塊內
-                                inning_html = half_inning_section.inner_html()
-                                parsed_events = live.parse_active_inning_details(
-                                    inning_html, inning_num
-                                )
-                                full_game_events.extend(parsed_events)
-                            else:
-                                logger.info(
-                                    f"跳過第 {inning_num} 局 [{half_inning_selector}]，進攻方 ({batting_team}) 非目標球隊。"
-                                )
-
-                player_pa_counter = {
-                    p["summary"]["player_name"]: 0 for p in all_players_data
-                }
-
-                all_at_bats_details_enriched = []
-                inning_state = {}
-                for i, event in enumerate(full_game_events):
-                    inning = event.get("inning")
-
-                    if inning not in inning_state:
-                        inning_state[inning] = {
-                            "outs": 0,
-                            "runners": [None, None, None],
-                        }
-
-                    if inning_state[inning]["outs"] >= 3:
-                        inning_state[inning]["outs"] = 0
-                        inning_state[inning]["runners"] = [None, None, None]
-
-                    current_outs = inning_state[inning]["outs"]
-                    current_runners = inning_state[inning]["runners"]
-
-                    event["outs_before"] = current_outs
-                    runners_str_list = [
-                        base
-                        for base, runner in zip(
-                            ["一壘", "二壘", "三壘"], current_runners
-                        )
-                        if runner
-                    ]
-                    event["runners_on_base_before"] = (
-                        "、".join(runners_str_list) + "有人"
-                        if runners_str_list
-                        else "壘上無人"
+                for (
+                    inning_html,
+                    inning_num,
+                    half_inning_selector,
+                ) in all_half_innings_html:
+                    batting_team = (
+                        game_info["away_team"]
+                        if half_inning_selector == "section.top"
+                        else game_info["home_team"]
                     )
 
-                    hitter = event.get("hitter_name")
-                    if hitter:
-                        if hitter not in player_pa_counter:
-                            player_pa_counter[hitter] = 0
-                        player_pa_counter[hitter] += 1
-                        event["sequence_in_game"] = player_pa_counter[hitter]
+                    if not target_teams or batting_team in target_teams:
+                        parsed_events = live.parse_active_inning_details(
+                            inning_html, inning_num
+                        )
+                        full_game_events.extend(parsed_events)
 
-                    all_at_bats_details_enriched.append(event)
-
-                    desc = event.get("description", "")
-
-                    new_outs = _update_outs_count(desc, current_outs)
-                    new_runners = _update_runners_state(current_runners, hitter, desc)
-
-                    inning_state[inning]["outs"] = new_outs
-                    inning_state[inning]["runners"] = new_runners
+                state_machine = GameStateMachine(all_players_data)
+                all_at_bats_details_enriched = state_machine.enrich_events_with_state(
+                    full_game_events
+                )
 
                 player_data_map = {
                     p["summary"]["player_name"]: p for p in all_players_data
@@ -398,13 +255,11 @@ def _process_filtered_games(
                                 )
                                 live_event["result_short"] = result_short_from_box
 
-                                # [修改] 以 result_short 為主的 result_type 決定邏輯
                                 mapped_type = map_result_short_to_type(
                                     result_short_from_box
                                 )
                                 if mapped_type:
                                     live_event["result_type"] = mapped_type
-                                # 如果映射失敗，則保留 parser 的 fallback 結果
 
                             except StopIteration:
                                 logger.warning(
@@ -413,7 +268,6 @@ def _process_filtered_games(
                                 live_event["result_short"] = "未知"
                         else:
                             live_event["result_short"] = "無"
-                            # [修改] 當打席未完成時，將 result_type 設為 INCOMPLETE_PA
                             live_event["result_type"] = AtBatResultType.INCOMPLETE_PA
 
                         player_data["at_bats_details"].append(live_event)
@@ -423,7 +277,8 @@ def _process_filtered_games(
                     if "box_score_iterator" in p_data:
                         del p_data["box_score_iterator"]
 
-                players.store_player_game_data(
+                # [重構] 透過 DataPersistence 服務儲存最終資料
+                data_persistence.commit_player_game_data(
                     db, game_id_in_db, final_player_data_list
                 )
                 db.commit()

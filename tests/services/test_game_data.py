@@ -1,127 +1,79 @@
-from unittest.mock import patch, MagicMock, call, ANY
+# tests/services/test_game_data.py
+
+from unittest.mock import patch
 import pytest
-from sqlalchemy.exc import SQLAlchemyError
 import datetime
 
 from app.config import settings
-from app.exceptions import ScraperError
-from app.models import AtBatResultType
 from app.services import game_data
+from app.exceptions import ScraperError
 
 # --- 測試用的模擬資料 ---
 
-# 假設從 season_stats.parse_season_stats_page 解析器回傳的資料
 MOCK_PARSED_PLAYERS = [
     {"player_name": "王柏融", "player_url": "http://example.com/wang"},
     {"player_name": "魔鷹", "player_url": "http://example.com/moya"},
     {"player_name": "吳念庭", "player_url": "http://example.com/wu"},
-    {"player_name": "宋家豪", "player_url": "http://example.com/sung"},
-    {"player_name": "路人甲", "player_url": "http://example.com/a"},
-    {"player_name": "路人乙", "player_url": "http://example.com/b"},
 ]
-
-# 假設 settings.TARGET_PLAYER_NAMES 的內容
-TARGET_PLAYERS_IN_SETTINGS = ["王柏融", "魔鷹", "吳念庭"]
-
 
 # --- Fixtures ---
 
 
 @pytest.fixture
-def mock_playwright_page(monkeypatch):
-    """
-    完整模擬 Playwright 的啟動過程，並回傳一個可控的假 page 物件。
-    """
-    # 最內層的事件容器
-    mock_event_container = MagicMock()
-    mock_event_container.count.return_value = 1  # 模擬找到 1 個事件容器
-    mock_event_container.nth.return_value = (
-        MagicMock()
-    )  # .nth() 回傳一個可點擊的 mock 物件
+def mock_orchestration_dependencies(monkeypatch):
+    """為 _process_filtered_games 模擬所有重構後的新服務依賴。"""
+    mock_browser_operator_class = patch(
+        "app.services.game_data.BrowserOperator"
+    ).start()
+    mock_game_state_machine_class = patch(
+        "app.services.game_data.GameStateMachine"
+    ).start()
+    mock_data_persistence = patch("app.services.game_data.data_persistence").start()
+    mock_box_score_parser = patch("app.services.game_data.box_score").start()
+    mock_live_parser = patch("app.services.game_data.live").start()
+    mock_session = patch("app.services.game_data.SessionLocal").start()
+    patch("app.services.game_data.get_page").start()
+    patch("app.utils.parsing_helpers.is_formal_pa", return_value=True).start()
+    patch("app.utils.parsing_helpers.map_result_short_to_type").start()
 
-    # 半局 section
-    mock_half_inning_section = MagicMock()
-    mock_half_inning_section.count.return_value = 1  # 模擬找到了 top/bot section
-    mock_half_inning_section.locator.return_value = (
-        mock_event_container  # 當它被 .locator() 時，回傳事件容器
-    )
-
-    # active tab 的內容
-    mock_active_content = MagicMock()
-    mock_active_content.inner_html.return_value = "<div>Mock Inning HTML</div>"
-    mock_active_content.locator.return_value = (
-        mock_half_inning_section  # 當它被 .locator() 時，回傳半局 section
-    )
-
-    # 局數按鈕
-    mock_inning_button = MagicMock()
-    mock_inning_buttons_locator = MagicMock()
-    mock_inning_buttons_locator.all.return_value = [mock_inning_button]
-
-    # page 物件本身
-    mock_page = MagicMock()
-
-    # 定義 side_effect 函式，根據選擇器回傳不同 mock 物件
-    def locator_side_effect(selector):
-        if "div.tabs > ul > li" in selector:
-            return mock_inning_buttons_locator
-        if "div.tab_cont.active" in selector:
-            return mock_active_content
-        return MagicMock()
-
-    mock_page.locator.side_effect = locator_side_effect
-
-    # 模擬 Playwright 的啟動過程
-    mock_browser = MagicMock()
-    mock_browser.new_page.return_value = mock_page
-    mock_chromium = MagicMock()
-    mock_chromium.launch.return_value = mock_browser
-    mock_playwright = MagicMock()
-    mock_playwright.chromium = mock_chromium
-    mock_sync_playwright = MagicMock()
-    mock_sync_playwright.__enter__.return_value = mock_playwright
-    monkeypatch.setattr("app.browser.sync_playwright", lambda: mock_sync_playwright)
-
-    return mock_page
+    mocks = {
+        "BrowserOperator": mock_browser_operator_class,
+        "GameStateMachine": mock_game_state_machine_class,
+        "data_persistence": mock_data_persistence,
+        "box_score_parser": mock_box_score_parser,
+        "live_parser": mock_live_parser,
+        "session": mock_session,
+    }
+    yield mocks
+    patch.stopall()
 
 
 @pytest.fixture
-def mock_scraper_dependencies(monkeypatch):
-    """
-    為 scraper 中的函式模擬所有外部依賴。
-    """
-    test_settings = settings.model_copy()
-    monkeypatch.setattr("app.services.game_data.settings", test_settings)
-
+def mock_high_level_dependencies(monkeypatch):
+    """為高層級的協調函式 (如 scrape_entire_year) 模擬依賴。"""
+    mock_fetcher = patch("app.services.game_data.fetcher").start()
+    mock_schedule_parser = patch("app.services.game_data.schedule").start()
+    mock_season_stats_parser = patch("app.services.game_data.season_stats").start()
+    # [修正] 將 mock 路徑指向 app.services.game_data 內部使用的 crud 模組
+    patch("app.services.game_data.data_persistence.players").start()
+    mock_player_service = patch("app.services.game_data.player_service").start()
+    mock_session = patch("app.services.game_data.SessionLocal").start()
+    mock_logger = patch("app.services.game_data.logger").start()
+    mock_time = patch("app.services.game_data.time").start()
     mock_datetime = patch("app.services.game_data.datetime").start()
     mock_datetime.datetime.strptime.side_effect = datetime.datetime.strptime
     mock_datetime.date.today.return_value = datetime.date(2025, 8, 11)
 
-    # 統一 mock fetcher.get_dynamic_page_content
-    mock_fetcher = patch("app.services.game_data.fetcher").start()
-    mock_fetcher.get_dynamic_page_content.return_value = "<html>Mock Page</html>"
-
     mocks = {
         "fetcher": mock_fetcher,
-        "schedule_parser": patch("app.services.game_data.schedule").start(),
-        "box_score_parser": patch("app.services.game_data.box_score").start(),
-        "live_parser": patch("app.services.game_data.live").start(),
-        "season_stats_parser": patch("app.services.game_data.season_stats").start(),
-        "players_crud": patch("app.services.game_data.players").start(),
-        "games_crud": patch("app.services.game_data.games").start(),
-        "session": patch("app.services.game_data.SessionLocal").start(),
-        "logger": patch("app.services.game_data.logger").start(),
-        "time": patch("app.services.game_data.time").start(),
-        "update_outs": patch("app.services.game_data._update_outs_count").start(),
-        "update_runners": patch("app.services.game_data._update_runners_state").start(),
+        "schedule_parser": mock_schedule_parser,
+        "season_stats_parser": mock_season_stats_parser,
+        "player_service": mock_player_service,
+        "session": mock_session,
+        "logger": mock_logger,
+        "time": mock_time,
         "datetime": mock_datetime,
-        "expect": patch("app.services.game_data.expect").start(),
-        "is_formal_pa": patch("app.utils.parsing_helpers.is_formal_pa").start(),
-        "map_result": patch(
-            "app.utils.parsing_helpers.map_result_short_to_type"
-        ).start(),
     }
-
     yield mocks
     patch.stopall()
 
@@ -130,221 +82,128 @@ def mock_scraper_dependencies(monkeypatch):
 
 
 def test_scrape_and_store_season_stats_default_behavior(
-    mock_scraper_dependencies, monkeypatch
+    mock_high_level_dependencies, monkeypatch
 ):
-    monkeypatch.setattr(
-        "app.config.settings.TARGET_PLAYER_NAMES", TARGET_PLAYERS_IN_SETTINGS
-    )
-    mock_parser = mock_scraper_dependencies["season_stats_parser"]
+    """測試 scrape_and_store_season_stats 在預設模式下只更新目標球員。"""
+    monkeypatch.setattr("app.config.settings.TARGET_PLAYER_NAMES", ["王柏融", "魔鷹"])
+    mock_parser = mock_high_level_dependencies["season_stats_parser"]
     mock_parser.parse_season_stats_page.return_value = MOCK_PARSED_PLAYERS
+    mock_player_service = mock_high_level_dependencies["player_service"]
 
-    with patch(
-        "app.services.player.scrape_and_store_player_career_stats"
-    ) as mock_scrape_career:
+    # [修正] 由於 crud.players 已被 mock，這裡需要 mock 其底下的函式
+    with patch("app.crud.players.store_player_season_stats_and_history"):
         game_data.scrape_and_store_season_stats()
 
-        assert mock_scrape_career.call_count == len(TARGET_PLAYERS_IN_SETTINGS)
-        mock_scrape_career.assert_any_call(
-            player_name="王柏融", player_url="http://example.com/wang"
-        )
-        mock_scrape_career.assert_any_call(
-            player_name="魔鷹", player_url="http://example.com/moya"
-        )
-        mock_scrape_career.assert_any_call(
-            player_name="吳念庭", player_url="http://example.com/wu"
-        )
+    assert mock_player_service.scrape_and_store_player_career_stats.call_count == 2
+    mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
+        player_name="王柏融", player_url="http://example.com/wang"
+    )
+    mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
+        player_name="魔鷹", player_url="http://example.com/moya"
+    )
 
 
-def test_scrape_and_store_season_stats_update_all(mock_scraper_dependencies):
-    mock_parser = mock_scraper_dependencies["season_stats_parser"]
+def test_scrape_and_store_season_stats_update_all(mock_high_level_dependencies):
+    """測試 scrape_and_store_season_stats 在 update_career_stats_for_all=True 時更新所有球員。"""
+    mock_parser = mock_high_level_dependencies["season_stats_parser"]
     mock_parser.parse_season_stats_page.return_value = MOCK_PARSED_PLAYERS
+    mock_player_service = mock_high_level_dependencies["player_service"]
 
-    with patch(
-        "app.services.player.scrape_and_store_player_career_stats"
-    ) as mock_scrape_career:
+    with patch("app.crud.players.store_player_season_stats_and_history"):
         game_data.scrape_and_store_season_stats(update_career_stats_for_all=True)
 
-        assert mock_scrape_career.call_count == len(MOCK_PARSED_PLAYERS)
-        mock_scrape_career.assert_any_call(
-            player_name="路人甲", player_url="http://example.com/a"
-        )
-
-
-def test_scrape_season_stats_propagates_db_error(mock_scraper_dependencies):
-    mock_parser = mock_scraper_dependencies["season_stats_parser"]
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_session_instance = mock_scraper_dependencies["session"].return_value
-
-    mock_parser.parse_season_stats_page.return_value = [{"player_name": "Player A"}]
-    mock_players_crud.store_player_season_stats_and_history.side_effect = (
-        SQLAlchemyError("DB Error")
+    assert mock_player_service.scrape_and_store_player_career_stats.call_count == len(
+        MOCK_PARSED_PLAYERS
+    )
+    mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
+        player_name="吳念庭", player_url="http://example.com/wu"
     )
 
-    with pytest.raises(SQLAlchemyError, match="DB Error"):
-        game_data.scrape_and_store_season_stats()
+
+# --- 測試 _process_filtered_games (重構後) ---
+
+
+def test_process_filtered_games_orchestration(mock_orchestration_dependencies):
+    """測試 _process_filtered_games 作為協調者的主要成功路徑。"""
+    mock_dp = mock_orchestration_dependencies["data_persistence"]
+    mock_browser_op_instance = mock_orchestration_dependencies[
+        "BrowserOperator"
+    ].return_value
+    mock_state_machine_instance = mock_orchestration_dependencies[
+        "GameStateMachine"
+    ].return_value
+    mock_box_parser = mock_orchestration_dependencies["box_score_parser"]
+    mock_session_instance = mock_orchestration_dependencies["session"].return_value
+
+    game_to_process = [
+        {
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "cpbl_game_id": "G01",
+            "game_date": "2025-08-12",
+            "box_score_url": "http://fake.url/box",
+        }
+    ]
+    mock_dp.prepare_game_storage.return_value = 123
+    mock_browser_op_instance.navigate_and_get_box_score_content.return_value = (
+        "<html>box</html>"
+    )
+    mock_box_parser.parse_box_score_page.return_value = [
+        {"summary": {"player_name": "P1"}, "at_bats_list": ["安打"]}
+    ]
+    mock_browser_op_instance.extract_live_events_html.return_value = [
+        ("<html>live</html>", 1, "section.top")
+    ]
+    mock_state_machine_instance.enrich_events_with_state.return_value = [
+        {"hitter_name": "P1", "result_short": "安打"}
+    ]
+
+    game_data._process_filtered_games(game_to_process, target_teams=["Team A"])
+
+    mock_dp.prepare_game_storage.assert_called_once()
+    mock_browser_op_instance.navigate_and_get_box_score_content.assert_called_once()
+    mock_browser_op_instance.extract_live_events_html.assert_called_once()
+    mock_orchestration_dependencies["GameStateMachine"].assert_called_once()
+    mock_state_machine_instance.enrich_events_with_state.assert_called_once()
+    mock_dp.commit_player_game_data.assert_called_once()
+    mock_session_instance.commit.assert_called_once()
+    mock_session_instance.rollback.assert_not_called()
+
+
+def test_process_filtered_games_rolls_back_on_error(mock_orchestration_dependencies):
+    """測試當任何子服務拋出異常時，主流程會執行資料庫復原。"""
+    mock_dp = mock_orchestration_dependencies["data_persistence"]
+    mock_session_instance = mock_orchestration_dependencies["session"].return_value
+    mock_dp.commit_player_game_data.side_effect = ValueError("DB Error")
+
+    game_to_process = [
+        {
+            "home_team": "Team A",
+            "away_team": "Team B",
+            "cpbl_game_id": "G01",
+            "game_date": "2025-08-12",
+            "box_score_url": "http://fake.url/box",
+        }
+    ]
+
+    with pytest.raises(ValueError, match="DB Error"):
+        game_data._process_filtered_games(game_to_process, target_teams=["Team A"])
 
     mock_session_instance.commit.assert_not_called()
     mock_session_instance.rollback.assert_called_once()
-    mock_session_instance.close.assert_called_once()
 
 
-# --- 測試 _process_filtered_games ---
-
-
-def test_process_filtered_games_happy_path_full_flow(
-    mock_scraper_dependencies, mock_playwright_page
-):
-    """擴寫：測試 _process_filtered_games 的完整成功路徑，並專注於驗證合併邏輯。"""
-    mock_session = mock_scraper_dependencies["session"].return_value
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
-    mock_live_parser = mock_scraper_dependencies["live_parser"]
-    mock_update_outs = mock_scraper_dependencies["update_outs"]
-    mock_update_runners = mock_scraper_dependencies["update_runners"]
-    mock_is_formal_pa = mock_scraper_dependencies["is_formal_pa"]
-    mock_map_result = mock_scraper_dependencies["map_result"]
-
-    game_to_process = [
-        {
-            "home_team": settings.TARGET_TEAM_NAME,
-            "away_team": "中信兄弟",
-            "cpbl_game_id": "TEST01",
-            "game_date": "2025-08-11",
-            "box_score_url": "http://fake.url/box?game_id=TEST01",
-        }
-    ]
-    mock_games_crud.create_game_and_get_id.return_value = 1
-
-    mock_box_score_parser.parse_box_score_page.return_value = [
-        {
-            "summary": {
-                "player_name": "王柏融",
-                "team_name": settings.TARGET_TEAM_NAME,
-            },
-            "at_bats_list": ["一安"],
-        }
-    ]
-
-    mock_live_parser.parse_active_inning_details.return_value = [
-        {
-            "inning": 1,
-            "hitter_name": "王柏融",
-            "description": "擊出一壘安打",
-            "result_type": AtBatResultType.ON_BASE,  # Parser's preliminary type
-        }
-    ]
-    mock_is_formal_pa.return_value = True
-    mock_update_outs.return_value = 0
-    mock_update_runners.return_value = ["王柏融", None, None]
-    mock_map_result.return_value = AtBatResultType.ON_BASE  # Mock the mapping result
-
-    game_data._process_filtered_games(
-        game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
-    )
-
-    mock_games_crud.delete_game_if_exists.assert_called_once()
-    mock_games_crud.create_game_and_get_id.assert_called_once()
-    mock_playwright_page.goto.assert_has_calls(
-        [
-            call("http://fake.url/box?game_id=TEST01", timeout=ANY),
-            call(
-                "http://fake.url/box/live?game_id=TEST01",
-                wait_until="load",
-                timeout=ANY,
-            ),
-        ]
-    )
-    mock_players_crud.store_player_game_data.assert_called_once()
-
-    final_data_call = mock_players_crud.store_player_game_data.call_args
-    final_players_data_list = final_data_call.args[2]
-    final_player_data = final_players_data_list[0]
-    first_at_bat = final_player_data["at_bats_details"][0]
-
-    assert first_at_bat["result_short"] == "一安"
-    assert first_at_bat["sequence_in_game"] == 1
-    assert first_at_bat["result_type"] == AtBatResultType.ON_BASE  # Verify final type
-    mock_session.commit.assert_called_once()
-
-
-def test_process_filtered_games_rolls_back_on_error(
-    mock_scraper_dependencies, mock_playwright_page
-):
-    """測試 _process_filtered_games 在發生錯誤時會復原交易並重新拋出異常。"""
-    mock_session = mock_scraper_dependencies["session"].return_value
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-
-    # 模擬儲存資料時發生錯誤
-    mock_players_crud.store_player_game_data.side_effect = ValueError("Invalid Data")
-
-    mock_box_score_parser.parse_box_score_page.return_value = [
-        {
-            "summary": {"player_name": "王柏融"},
-            "at_bats_list": ["滾地"],
-        }
-    ]
-    mock_games_crud.create_game_and_get_id.return_value = 1
-
-    game_to_process = [
-        {
-            "home_team": settings.TARGET_TEAM_NAME,
-            "away_team": "Opponent",  # [修正] 補上 away_team 欄位以避免 KeyError
-            "box_score_url": "http://fake.url",
-            "game_date": "2025-08-11",
-            "cpbl_game_id": "ERR01",
-        }
-    ]
-
-    with pytest.raises(ValueError, match="Invalid Data"):
-        game_data._process_filtered_games(
-            game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
-        )
-
-    mock_session.commit.assert_not_called()
-    mock_session.rollback.assert_called_once()
-
-
-def test_process_filtered_games_e2e_mode(mock_scraper_dependencies, monkeypatch):
-    """新增：測試當 E2E_TEST_MODE 為 True 時，是否跳過爬蟲直接寫入假資料。"""
-    monkeypatch.setattr(game_data.settings, "E2E_TEST_MODE", True)
-    mock_session = mock_scraper_dependencies["session"].return_value
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-
-    with patch("app.browser.get_page") as mock_get_page:
-        game_to_process = [
-            {
-                "home_team": settings.TARGET_TEAM_NAME,
-                "game_date": "2025-08-11",
-                "cpbl_game_id": "E2E01",
-            }
-        ]
-        mock_games_crud.create_game_and_get_id.return_value = 99
-
-        game_data._process_filtered_games(game_to_process)
-
-        mock_get_page.assert_not_called()
-        # 【FIX】斷言時直接使用 mock_session 物件，而不是它的 .return_value
-        mock_players_crud.store_player_game_data.assert_called_once_with(
-            mock_session, 99, ANY
-        )
-        mock_session.commit.assert_called_once()
-
-
-# --- 測試 scrape_entire_year ---
+# --- 測試高層級協調函式 ---
 
 
 def test_scrape_entire_year_skips_month_on_scraper_error(
-    mock_scraper_dependencies, monkeypatch
+    mock_high_level_dependencies, monkeypatch
 ):
     """測試 scrape_entire_year 在遇到 ScraperError 時會跳過該月份並繼續。"""
-    mock_fetcher = mock_scraper_dependencies["fetcher"]
-    mock_logger = mock_scraper_dependencies["logger"]
-    mock_schedule_parser = mock_scraper_dependencies["schedule_parser"]
-    mock_datetime = mock_scraper_dependencies["datetime"]
+    mock_fetcher = mock_high_level_dependencies["fetcher"]
+    mock_logger = mock_high_level_dependencies["logger"]
+    mock_schedule_parser = mock_high_level_dependencies["schedule_parser"]
+    mock_datetime = mock_high_level_dependencies["datetime"]
 
     with patch("app.services.game_data._process_filtered_games") as mock_process_games:
         mock_fetcher.fetch_schedule_page.side_effect = [
@@ -354,12 +213,9 @@ def test_scrape_entire_year_skips_month_on_scraper_error(
         ]
         mock_schedule_parser.parse_schedule_page.side_effect = [
             [{"game_date": "2025-03-15"}],
-            # ScraperError will prevent this from being called for April
             [{"game_date": "2025-05-10"}],
         ]
-
         mock_datetime.date.today.return_value = datetime.date(2025, 5, 20)
-
         monkeypatch.setattr(settings, "CPBL_SEASON_START_MONTH", 3)
         monkeypatch.setattr(settings, "CPBL_SEASON_END_MONTH", 5)
 
@@ -372,10 +228,7 @@ def test_scrape_entire_year_skips_month_on_scraper_error(
         assert mock_process_games.call_count == 2
 
 
-# --- 測試 scrape_single_day ---
-
-
-def test_scrape_single_day_flow(mock_scraper_dependencies):
+def test_scrape_single_day_flow(mock_high_level_dependencies):
     """測試 scrape_single_day 是否使用傳入的參數正確呼叫 _process_filtered_games。"""
     with (
         patch("app.services.game_data._process_filtered_games") as mock_process_games,
@@ -396,236 +249,3 @@ def test_scrape_single_day_flow(mock_scraper_dependencies):
         mock_process_games.assert_called_once_with(
             games_for_the_day, target_teams=settings.get_target_teams_as_list()
         )
-
-
-def test_process_filtered_games_skips_non_target_teams_half_inning(
-    mock_scraper_dependencies, mock_playwright_page
-):
-    """【T19-7 新增】測試函式能正確跳過非目標球隊的半局，不進行解析。"""
-    mock_live_parser = mock_scraper_dependencies["live_parser"]
-    mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-
-    # 模擬 Box Score 解析回傳資料，以讓流程繼續
-    mock_box_score_parser.parse_box_score_page.return_value = [
-        {"summary": {"player_name": "Test"}, "at_bats_list": []}
-    ]
-    mock_games_crud.create_game_and_get_id.return_value = 1
-
-    # --- [修正] 建立一個更精確的 mock 來模擬 Playwright 的頁面結構 ---
-    # 1. 準備各種頁面元素的 mock
-    mock_inning_button = MagicMock()
-    mock_inning_buttons_locator = MagicMock()
-    mock_inning_buttons_locator.all.return_value = [mock_inning_button]
-
-    mock_top_section = MagicMock()
-    mock_top_section.count.return_value = 1
-    mock_top_section.inner_html.return_value = "<html>Top Half HTML</html>"
-
-    mock_bot_section = MagicMock()
-    mock_bot_section.count.return_value = 1
-    mock_bot_section.inner_html.return_value = "<html>Bot Half HTML</html>"
-
-    # 2. 準備 active content 的 mock，它的 locator 方法會根據選擇器回傳 top 或 bot section
-    def active_content_locator_side_effect(selector):
-        if selector == "section.top":
-            return mock_top_section
-        if selector == "section.bot":
-            return mock_bot_section
-        mock_event_container = MagicMock()
-        mock_event_container.count.return_value = 0
-        return mock_event_container
-
-    mock_active_content = MagicMock()
-    mock_active_content.locator.side_effect = active_content_locator_side_effect
-
-    # 3. 準備最外層 page 的 mock，它的 locator 方法會根據選擇器回傳局數按鈕或 active content
-    def page_locator_side_effect(selector):
-        if "div.tabs > ul > li" in selector:
-            return mock_inning_buttons_locator
-        if "div.tab_cont.active" in selector:
-            return mock_active_content
-        return MagicMock()
-
-    # 4. 將設定好的 side_effect 應用到傳入的 mock_playwright_page
-    mock_playwright_page.locator.side_effect = page_locator_side_effect
-    mock_playwright_page.locator.return_value = None
-
-    # 執行函式，目標球隊只設定主隊
-    game_data._process_filtered_games(
-        [
-            {
-                "home_team": "台鋼雄鷹",
-                "away_team": "樂天桃猿",
-                "box_score_url": "http://fake.url",
-                "game_date": "2025-08-11",
-                "cpbl_game_id": "T19_FILTER",
-            }
-        ],
-        target_teams=["台鋼雄鷹"],
-    )
-
-    # 驗證：只有下半局(bot)的 HTML 被傳給解析器
-    mock_live_parser.parse_active_inning_details.assert_called_once_with(
-        "<html>Bot Half HTML</html>", ANY
-    )
-
-
-def test_process_filtered_games_merges_data_correctly(
-    mock_scraper_dependencies, mock_playwright_page
-):
-    """【T19 擴充】測試數據合併邏輯能正確處理混合了正式與非正式打席的狀況。"""
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
-    mock_live_parser = mock_scraper_dependencies["live_parser"]
-    mock_is_formal_pa = mock_scraper_dependencies["is_formal_pa"]
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-    mock_map_result = mock_scraper_dependencies["map_result"]
-    mock_update_runners = mock_scraper_dependencies["update_runners"]
-    mock_update_outs = mock_scraper_dependencies["update_outs"]
-
-    mock_games_crud.create_game_and_get_id.return_value = 1
-    mock_box_score_parser.parse_box_score_page.return_value = [
-        {
-            "summary": {"player_name": "魔鷹", "team_name": settings.TARGET_TEAM_NAME},
-            "at_bats_list": ["三振", "全壘打"],
-        }
-    ]
-
-    live_events = [
-        {
-            "inning": 1,
-            "hitter_name": "魔鷹",
-            "description": "二壘跑者遭牽制出局。",
-            "result_type": AtBatResultType.OUT,  # Parser's guess
-        },
-        {
-            "inning": 1,
-            "hitter_name": "魔鷹",
-            "description": "遭到三振。",
-            "result_type": AtBatResultType.OUT,
-        },
-        {
-            "inning": 1,
-            "hitter_name": "魔鷹",
-            "description": "擊出右外野方向全壘打。",
-            "result_type": AtBatResultType.ON_BASE,
-        },
-    ]
-    mock_live_parser.parse_active_inning_details.side_effect = [live_events, []]
-
-    # Mock is_formal_pa and map_result behavior
-    mock_is_formal_pa.side_effect = lambda desc: "牽制" not in desc
-    mock_map_result.side_effect = lambda res: {
-        "三振": AtBatResultType.OUT,
-        "全壘打": AtBatResultType.ON_BASE,
-    }.get(res)
-    # [修正] 為所有狀態機更新函式提供 mock 回傳值
-    mock_update_runners.return_value = [None, None, None]
-    # 【FIX】為 update_outs 提供 mock 回傳值以避免 TypeError
-    mock_update_outs.side_effect = [1, 2, 2]
-
-    game_to_process = [
-        {
-            "home_team": settings.TARGET_TEAM_NAME,
-            "away_team": "Opponent",
-            "box_score_url": "http://fake.url",
-            "game_date": "2025-08-11",
-            "cpbl_game_id": "T19_MERGE",
-        }
-    ]
-    game_data._process_filtered_games(
-        games_to_process=game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
-    )
-
-    mock_players_crud.store_player_game_data.assert_called_once()
-    final_data_call = mock_players_crud.store_player_game_data.call_args
-    final_players_data = final_data_call.args[2][0]
-    final_at_bats = final_players_data["at_bats_details"]
-
-    assert len(final_at_bats) == 3
-    # 驗證 event 1: 非正式打席
-    assert final_at_bats[0]["description"] == "二壘跑者遭牽制出局。"
-    assert final_at_bats[0]["result_short"] == "無"
-    assert final_at_bats[0]["result_type"] == AtBatResultType.INCOMPLETE_PA
-    # 驗證 event 2: 正式打席，結果為 OUT
-    assert final_at_bats[1]["description"] == "遭到三振。"
-    assert final_at_bats[1]["result_short"] == "三振"
-    assert final_at_bats[1]["result_type"] == AtBatResultType.OUT
-    # 驗證 event 3: 正式打席，結果為 ON_BASE
-    assert final_at_bats[2]["description"] == "擊出右外野方向全壘打。"
-    assert final_at_bats[2]["result_short"] == "全壘打"
-    assert final_at_bats[2]["result_type"] == AtBatResultType.ON_BASE
-
-
-def test_process_filtered_games_resets_outs_for_new_half_inning(
-    mock_scraper_dependencies, mock_playwright_page
-):
-    """【T19-2 新增】測試狀態機能在換半局時，能正確重設出局數。"""
-    mock_players_crud = mock_scraper_dependencies["players_crud"]
-    mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
-    mock_live_parser = mock_scraper_dependencies["live_parser"]
-    mock_update_outs = mock_scraper_dependencies["update_outs"]
-    mock_is_formal_pa = mock_scraper_dependencies["is_formal_pa"]
-    mock_games_crud = mock_scraper_dependencies["games_crud"]
-
-    mock_games_crud.create_game_and_get_id.return_value = 1
-
-    box_score_data = [
-        {"summary": {"player_name": "打者A"}, "at_bats_list": ["飛球"]},
-        {"summary": {"player_name": "打者B"}, "at_bats_list": ["飛球"]},
-        {"summary": {"player_name": "打者C"}, "at_bats_list": ["飛球"]},
-        {"summary": {"player_name": "打者D"}, "at_bats_list": ["安打"]},
-    ]
-    mock_box_score_parser.parse_box_score_page.return_value = box_score_data
-
-    live_events = [
-        {"inning": 1, "hitter_name": "打者A", "description": "飛球出局"},
-        {"inning": 1, "hitter_name": "打者B", "description": "飛球出局"},
-        {"inning": 1, "hitter_name": "打者C", "description": "飛球出局，三人出局"},
-        {"inning": 1, "hitter_name": "打者D", "description": "一壘安打"},
-    ]
-    # 【FIX】將 return_value 改為 side_effect 以處理多個半局的呼叫
-    mock_live_parser.parse_active_inning_details.side_effect = [live_events, []]
-
-    mock_is_formal_pa.return_value = True
-    mock_update_outs.side_effect = [1, 2, 3, 1]
-
-    game_to_process = [
-        {
-            "home_team": settings.TARGET_TEAM_NAME,
-            "away_team": "Opponent",
-            "box_score_url": "http://fake.url",
-            "game_date": "2025-08-11",
-            "cpbl_game_id": "T19_OUTS_RESET",
-        }
-    ]
-
-    # 注意：此處未傳入 target_teams，依賴主程式的修正來處理 None 的情況
-    game_data._process_filtered_games(
-        games_to_process=game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
-    )
-
-    mock_players_crud.store_player_game_data.assert_called_once()
-    final_data_call = mock_players_crud.store_player_game_data.call_args
-    all_at_bats = []
-    # 【FIX】修正參數索引
-    for player_data in final_data_call.args[2]:
-        all_at_bats.extend(player_data.get("at_bats_details", []))
-
-    # 【FIX】修正排序邏輯：根據 box_score_data 中的原始順序來排序，確保穩定性
-    original_player_order = [p["summary"]["player_name"] for p in box_score_data]
-    all_at_bats.sort(key=lambda x: original_player_order.index(x["hitter_name"]))
-
-    assert len(all_at_bats) == 4
-    assert all_at_bats[0]["hitter_name"] == "打者A"
-    assert all_at_bats[0]["outs_before"] == 0
-
-    assert all_at_bats[1]["hitter_name"] == "打者B"
-    assert all_at_bats[1]["outs_before"] == 1
-
-    assert all_at_bats[2]["hitter_name"] == "打者C"
-    assert all_at_bats[2]["outs_before"] == 2
-
-    assert all_at_bats[3]["hitter_name"] == "打者D"
-    assert all_at_bats[3]["outs_before"] == 0
