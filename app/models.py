@@ -1,6 +1,7 @@
 # app/models.py
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Integer,
     String,
@@ -14,6 +15,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import enum
+import sqlalchemy as sa
 
 from .db import Base
 
@@ -29,6 +31,7 @@ class AtBatResultType(enum.Enum):
     SACRIFICE = "SACRIFICE"  # 犧牲打
     FIELDERS_CHOICE = "FIELDERS_CHOICE"  # 野手選擇
     ERROR = "ERROR"  # 因失誤上壘
+    INCOMPLETE_PA = "incomplete_pa"  # [新增] 用於表示未完成的打席
 
 
 class RunnersSituation(str, enum.Enum):
@@ -152,6 +155,9 @@ class AtBatDetailDB(Base):
 
     runs_scored_on_play = Column(Integer, default=0)
     result_type = Column(Enum(AtBatResultType), nullable=True, index=True)
+    is_score_from_description = Column(  # [新增] 用於驗證的標記
+        Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     player_summary = relationship(
         "PlayerGameSummaryDB", back_populates="at_bat_details"

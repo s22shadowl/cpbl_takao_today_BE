@@ -19,18 +19,32 @@ from app.core.constants import (
 def _determine_result_details(description: str) -> dict:
     """
     根據打席的文字描述，解析出結構化的結果類型和得分。
-    TODO: 目前未能正確處理「比賽結束」的打席，但前端尚未實用 result_type
     """
     result = {
         "result_type": AtBatResultType.UNSPECIFIED,
         "runs_scored_on_play": 0,
+        "is_score_from_description": False,  # [新增] 初始化驗證標記
     }
 
-    score_match = re.search(r"得(\d+)分", description)
-    if score_match:
-        result["runs_scored_on_play"] = int(score_match.group(1))
+    # [修改] 實作得分計算的雙層解析策略
+    runs_scored = 0
+    is_from_desc = False
+    rbi_match = re.search(r"(\d+)分打點", description)
 
-    # 【修改】使用從 constants.py 導入的常數進行判斷
+    if rbi_match:
+        # 第一層：優先解析明確的「打點」
+        runs_scored = int(rbi_match.group(1))
+    else:
+        # 第二層：退回解析隱含的「得分事件」
+        runs_from_text = description.count("回本壘得分")
+        if runs_from_text > 0:
+            runs_scored = runs_from_text
+            is_from_desc = True  # 設定驗證標記
+
+    result["runs_scored_on_play"] = runs_scored
+    result["is_score_from_description"] = is_from_desc
+
+    # result_type 的判斷邏輯維持不變，作為服務層的 fallback
     if any(k in description for k in PARSER_SACRIFICE_KEYWORDS):
         result["result_type"] = AtBatResultType.SACRIFICE
     elif any(k in description for k in PARSER_FC_KEYWORDS):
@@ -52,13 +66,11 @@ def parse_active_inning_details(inning_html_content, inning):
     soup = BeautifulSoup(inning_html_content, "lxml")
     inning_events = []
 
-    # [修改] 選擇器修正：只選擇打席的主容器，從根本上解決重複計算問題
     event_items = soup.select("div.item.play")
     for item in event_items:
         try:
-            # [修改] 移除無用的 if/elif 結構，所有 item 都視為一個打席來處理
             event_data = {"inning": inning}
-            event_data["type"] = "at_bat"  # 所有事件都從一個 at_bat 開始解析
+            event_data["type"] = "at_bat"
 
             hitter_name_tag = item.select_one("div.player > a > span")
             desc_tag = item.select_one("div.info > div.desc")
@@ -69,9 +81,7 @@ def parse_active_inning_details(inning_html_content, inning):
 
             event_data["hitter_name"] = hitter_name_tag.text.strip()
 
-            # 處理描述文字
             description_text = " ".join(desc_tag.stripped_strings)
-            # 移除描述文字中固定的前綴，例如 "第4棒 DH 魔鷹："
             clean_desc = re.sub(
                 r"^\s*第\d+棒\s+[A-Z0-9]+\s+[\w\s\.]+\s*：\s*",
                 "",
@@ -80,13 +90,11 @@ def parse_active_inning_details(inning_html_content, inning):
             event_data["description"] = clean_desc
             event_data["result_description_full"] = clean_desc
 
-            # 根據描述判斷打席結果細節
             result_details = _determine_result_details(
                 event_data["result_description_full"]
             )
             event_data.update(result_details)
 
-            # 處理展開後的詳細投球數據
             pitch_detail_block = item.find("div", class_="detail")
             if pitch_detail_block:
                 pitcher_name_tag = pitch_detail_block.select_one(

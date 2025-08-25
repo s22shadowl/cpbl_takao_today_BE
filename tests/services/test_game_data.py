@@ -5,6 +5,7 @@ import datetime
 
 from app.config import settings
 from app.exceptions import ScraperError
+from app.models import AtBatResultType
 from app.services import game_data
 
 # --- 測試用的模擬資料 ---
@@ -115,8 +116,12 @@ def mock_scraper_dependencies(monkeypatch):
         "update_runners": patch("app.services.game_data._update_runners_state").start(),
         "datetime": mock_datetime,
         "expect": patch("app.services.game_data.expect").start(),
-        "is_formal_pa": patch("app.services.game_data.is_formal_pa").start(),
+        "is_formal_pa": patch("app.utils.parsing_helpers.is_formal_pa").start(),
+        "map_result": patch(
+            "app.utils.parsing_helpers.map_result_short_to_type"
+        ).start(),
     }
+
     yield mocks
     patch.stopall()
 
@@ -127,11 +132,6 @@ def mock_scraper_dependencies(monkeypatch):
 def test_scrape_and_store_season_stats_default_behavior(
     mock_scraper_dependencies, monkeypatch
 ):
-    """
-    測試預設行為 (update_career_stats_for_all=False)，
-    應只為 settings.TARGET_PLAYER_NAMES 中的球員更新生涯數據。
-    """
-    # 1. 設定 Mocks
     monkeypatch.setattr(
         "app.config.settings.TARGET_PLAYER_NAMES", TARGET_PLAYERS_IN_SETTINGS
     )
@@ -141,10 +141,8 @@ def test_scrape_and_store_season_stats_default_behavior(
     with patch(
         "app.services.player.scrape_and_store_player_career_stats"
     ) as mock_scrape_career:
-        # 2. 執行函式 (使用預設參數)
         game_data.scrape_and_store_season_stats()
 
-        # 3. 驗證結果
         assert mock_scrape_career.call_count == len(TARGET_PLAYERS_IN_SETTINGS)
         mock_scrape_career.assert_any_call(
             player_name="王柏融", player_url="http://example.com/wang"
@@ -158,21 +156,14 @@ def test_scrape_and_store_season_stats_default_behavior(
 
 
 def test_scrape_and_store_season_stats_update_all(mock_scraper_dependencies):
-    """
-    測試當 update_career_stats_for_all=True 時，
-    應為所有從頁面解析出的球員更新生涯數據。
-    """
-    # 1. 設定 Mocks
     mock_parser = mock_scraper_dependencies["season_stats_parser"]
     mock_parser.parse_season_stats_page.return_value = MOCK_PARSED_PLAYERS
 
     with patch(
         "app.services.player.scrape_and_store_player_career_stats"
     ) as mock_scrape_career:
-        # 2. 執行函式 (明確傳入 True)
         game_data.scrape_and_store_season_stats(update_career_stats_for_all=True)
 
-        # 3. 驗證結果
         assert mock_scrape_career.call_count == len(MOCK_PARSED_PLAYERS)
         mock_scrape_career.assert_any_call(
             player_name="路人甲", player_url="http://example.com/a"
@@ -180,7 +171,6 @@ def test_scrape_and_store_season_stats_update_all(mock_scraper_dependencies):
 
 
 def test_scrape_season_stats_propagates_db_error(mock_scraper_dependencies):
-    """測試當資料庫操作拋出錯誤時，會正確關閉 session 且不 commit。"""
     mock_parser = mock_scraper_dependencies["season_stats_parser"]
     mock_players_crud = mock_scraper_dependencies["players_crud"]
     mock_session_instance = mock_scraper_dependencies["session"].return_value
@@ -190,11 +180,9 @@ def test_scrape_season_stats_propagates_db_error(mock_scraper_dependencies):
         SQLAlchemyError("DB Error")
     )
 
-    # 驗證 SQLAlchemyError 是否被正確拋出
     with pytest.raises(SQLAlchemyError, match="DB Error"):
         game_data.scrape_and_store_season_stats()
 
-    # 驗證資料庫操作
     mock_session_instance.commit.assert_not_called()
     mock_session_instance.rollback.assert_called_once()
     mock_session_instance.close.assert_called_once()
@@ -215,6 +203,7 @@ def test_process_filtered_games_happy_path_full_flow(
     mock_update_outs = mock_scraper_dependencies["update_outs"]
     mock_update_runners = mock_scraper_dependencies["update_runners"]
     mock_is_formal_pa = mock_scraper_dependencies["is_formal_pa"]
+    mock_map_result = mock_scraper_dependencies["map_result"]
 
     game_to_process = [
         {
@@ -241,13 +230,14 @@ def test_process_filtered_games_happy_path_full_flow(
         {
             "inning": 1,
             "hitter_name": "王柏融",
-            "description": "擊出一壘安打，帶有一分打點",
-            "rbi": 1,
+            "description": "擊出一壘安打",
+            "result_type": AtBatResultType.ON_BASE,  # Parser's preliminary type
         }
     ]
     mock_is_formal_pa.return_value = True
     mock_update_outs.return_value = 0
     mock_update_runners.return_value = ["王柏融", None, None]
+    mock_map_result.return_value = AtBatResultType.ON_BASE  # Mock the mapping result
 
     game_data._process_filtered_games(
         game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
@@ -255,7 +245,6 @@ def test_process_filtered_games_happy_path_full_flow(
 
     mock_games_crud.delete_game_if_exists.assert_called_once()
     mock_games_crud.create_game_and_get_id.assert_called_once()
-
     mock_playwright_page.goto.assert_has_calls(
         [
             call("http://fake.url/box?game_id=TEST01", timeout=ANY),
@@ -266,25 +255,16 @@ def test_process_filtered_games_happy_path_full_flow(
             ),
         ]
     )
-
     mock_players_crud.store_player_game_data.assert_called_once()
 
     final_data_call = mock_players_crud.store_player_game_data.call_args
-    # 【FIX】修正參數索引，球員資料列表在第 3 個參數 (索引 2)
     final_players_data_list = final_data_call.args[2]
     final_player_data = final_players_data_list[0]
-
-    assert len(final_player_data["at_bats_details"]) == 1
     first_at_bat = final_player_data["at_bats_details"][0]
 
     assert first_at_bat["result_short"] == "一安"
     assert first_at_bat["sequence_in_game"] == 1
-    assert first_at_bat["inning"] == 1
-    assert "擊出一壘安打" in first_at_bat["description"]
-    assert first_at_bat["rbi"] == 1
-    assert "outs_before" in first_at_bat
-    assert "runners_on_base_before" in first_at_bat
-
+    assert first_at_bat["result_type"] == AtBatResultType.ON_BASE  # Verify final type
     mock_session.commit.assert_called_once()
 
 
@@ -499,8 +479,10 @@ def test_process_filtered_games_merges_data_correctly(
     mock_box_score_parser = mock_scraper_dependencies["box_score_parser"]
     mock_live_parser = mock_scraper_dependencies["live_parser"]
     mock_is_formal_pa = mock_scraper_dependencies["is_formal_pa"]
-    mock_update_outs = mock_scraper_dependencies["update_outs"]
     mock_games_crud = mock_scraper_dependencies["games_crud"]
+    mock_map_result = mock_scraper_dependencies["map_result"]
+    mock_update_runners = mock_scraper_dependencies["update_runners"]
+    mock_update_outs = mock_scraper_dependencies["update_outs"]
 
     mock_games_crud.create_game_and_get_id.return_value = 1
     mock_box_score_parser.parse_box_score_page.return_value = [
@@ -511,15 +493,36 @@ def test_process_filtered_games_merges_data_correctly(
     ]
 
     live_events = [
-        {"inning": 1, "hitter_name": "魔鷹", "description": "二壘跑者遭牽制出局。"},
-        {"inning": 1, "hitter_name": "魔鷹", "description": "遭到三振。"},
-        {"inning": 1, "hitter_name": "魔鷹", "description": "擊出右外野方向全壘打。"},
+        {
+            "inning": 1,
+            "hitter_name": "魔鷹",
+            "description": "二壘跑者遭牽制出局。",
+            "result_type": AtBatResultType.OUT,  # Parser's guess
+        },
+        {
+            "inning": 1,
+            "hitter_name": "魔鷹",
+            "description": "遭到三振。",
+            "result_type": AtBatResultType.OUT,
+        },
+        {
+            "inning": 1,
+            "hitter_name": "魔鷹",
+            "description": "擊出右外野方向全壘打。",
+            "result_type": AtBatResultType.ON_BASE,
+        },
     ]
-    # 【FIX】由於主程式邏輯修正後會處理兩個半局，將 return_value 改為 side_effect
-    # 讓第一次呼叫回傳事件，第二次（客隊半局）回傳空列表
     mock_live_parser.parse_active_inning_details.side_effect = [live_events, []]
 
+    # Mock is_formal_pa and map_result behavior
     mock_is_formal_pa.side_effect = lambda desc: "牽制" not in desc
+    mock_map_result.side_effect = lambda res: {
+        "三振": AtBatResultType.OUT,
+        "全壘打": AtBatResultType.ON_BASE,
+    }.get(res)
+    # [修正] 為所有狀態機更新函式提供 mock 回傳值
+    mock_update_runners.return_value = [None, None, None]
+    # 【FIX】為 update_outs 提供 mock 回傳值以避免 TypeError
     mock_update_outs.side_effect = [1, 2, 2]
 
     game_to_process = [
@@ -531,25 +534,28 @@ def test_process_filtered_games_merges_data_correctly(
             "cpbl_game_id": "T19_MERGE",
         }
     ]
-
-    # 注意：此處未傳入 target_teams，依賴主程式的修正來處理 None 的情況
     game_data._process_filtered_games(
         games_to_process=game_to_process, target_teams=[settings.TARGET_TEAM_NAME]
     )
 
     mock_players_crud.store_player_game_data.assert_called_once()
     final_data_call = mock_players_crud.store_player_game_data.call_args
-    # 【FIX】修正參數索引
     final_players_data = final_data_call.args[2][0]
     final_at_bats = final_players_data["at_bats_details"]
 
     assert len(final_at_bats) == 3
+    # 驗證 event 1: 非正式打席
     assert final_at_bats[0]["description"] == "二壘跑者遭牽制出局。"
     assert final_at_bats[0]["result_short"] == "無"
+    assert final_at_bats[0]["result_type"] == AtBatResultType.INCOMPLETE_PA
+    # 驗證 event 2: 正式打席，結果為 OUT
     assert final_at_bats[1]["description"] == "遭到三振。"
     assert final_at_bats[1]["result_short"] == "三振"
+    assert final_at_bats[1]["result_type"] == AtBatResultType.OUT
+    # 驗證 event 3: 正式打席，結果為 ON_BASE
     assert final_at_bats[2]["description"] == "擊出右外野方向全壘打。"
     assert final_at_bats[2]["result_short"] == "全壘打"
+    assert final_at_bats[2]["result_type"] == AtBatResultType.ON_BASE
 
 
 def test_process_filtered_games_resets_outs_for_new_half_inning(

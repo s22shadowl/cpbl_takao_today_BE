@@ -2,6 +2,17 @@
 
 # 【新增】此檔案用於存放通用的、無狀態的解析輔助函式。
 
+from typing import Optional
+from app.models import AtBatResultType  # 確保導入 Enum
+from app.core.constants import (  # 導入 Box Score 結果分類
+    HITS,
+    WALKS,
+    SACRIFICES,
+    ALL_OUTS,
+    FIELDERS_CHOICE,
+    ERRORS,
+)
+
 
 def is_formal_pa(event_description: str) -> bool:
     """
@@ -52,3 +63,20 @@ def is_formal_pa(event_description: str) -> bool:
         return False
 
     return True
+
+
+def map_result_short_to_type(result_short: str) -> Optional[AtBatResultType]:
+    """
+    [新增] 將 Box Score 的 result_short 字串映射到 AtBatResultType Enum。
+    """
+    if result_short in HITS or result_short in WALKS:
+        return AtBatResultType.ON_BASE
+    if result_short in ALL_OUTS:
+        return AtBatResultType.OUT
+    if result_short in SACRIFICES:
+        return AtBatResultType.SACRIFICE
+    if result_short in FIELDERS_CHOICE:
+        return AtBatResultType.FIELDERS_CHOICE
+    if result_short in ERRORS:
+        return AtBatResultType.ERROR
+    return None

@@ -7,8 +7,9 @@ from playwright.sync_api import expect
 from typing import Dict, List, Optional
 
 from app.crud import games, players
+from app.models import AtBatResultType
 from app.utils.state_machine import _update_outs_count, _update_runners_state
-from app.utils.parsing_helpers import is_formal_pa
+from app.utils.parsing_helpers import is_formal_pa, map_result_short_to_type
 
 from app.config import settings
 from app.core import fetcher
@@ -17,6 +18,7 @@ from app.db import SessionLocal
 from app.exceptions import ScraperError
 from app.browser import get_page
 from app.services import player as player_service
+
 
 logger = logging.getLogger(__name__)
 
@@ -395,6 +397,15 @@ def _process_filtered_games(
                                     player_data["box_score_iterator"]
                                 )
                                 live_event["result_short"] = result_short_from_box
+
+                                # [修改] 以 result_short 為主的 result_type 決定邏輯
+                                mapped_type = map_result_short_to_type(
+                                    result_short_from_box
+                                )
+                                if mapped_type:
+                                    live_event["result_type"] = mapped_type
+                                # 如果映射失敗，則保留 parser 的 fallback 結果
+
                             except StopIteration:
                                 logger.warning(
                                     f"資料不一致：球員 [{hitter_name}] 的 Live Text 事件比 Box Score 打席數多。"
@@ -402,6 +413,8 @@ def _process_filtered_games(
                                 live_event["result_short"] = "未知"
                         else:
                             live_event["result_short"] = "無"
+                            # [修改] 當打席未完成時，將 result_type 設為 INCOMPLETE_PA
+                            live_event["result_type"] = AtBatResultType.INCOMPLETE_PA
 
                         player_data["at_bats_details"].append(live_event)
 
