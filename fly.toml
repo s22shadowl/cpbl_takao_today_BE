@@ -7,56 +7,60 @@ kill_signal = "SIGINT"
 kill_timeout = "300s"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "Dockerfile"
+
+# [新增] 新增 deploy 區塊，並定義 release_command
+# 此指令會在映像檔建置完成後、新版本上線前執行，專門用於資料庫遷移等一次性任務。
+[deploy]
+  release_command = "alembic upgrade head"
 
 [processes]
-  web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
-  # [修改] 對應地，將 dramatiq 的內部超時調整為 285 秒 (4 分鐘 45 秒)
-  worker = "dramatiq app.workers --worker-shutdown-timeout 285000"
+  web = "uvicorn app.main:app --host 0.0.0.0 --port 8080"
+  worker = "dramatiq app.workers --worker-shutdown-timeout 285000"
 
 [[services]]
-  processes = ["web"]
-  protocol = "tcp"
-  internal_port = 8080
+  processes = ["web"]
+  protocol = "tcp"
+  internal_port = 8080
 
-  [[services.ports]]
-    port = 80
-    handlers = ["http"]
-    force_https = true
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+    force_https = true
 
-  [[services.ports]]
-    port = 443
-    handlers = ["tls", "http"]
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
 
-  [services.concurrency]
-    type = "connections"
-    hard_limit = 200
-    soft_limit = 150
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 200
+    soft_limit = 150
 
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 
-  [[services.checks]]
-  type = "tcp"
-  port = 8080
-  interval = "15s"
-  timeout = "2s"
-  grace_period = "30s"
+  [[services.checks]]
+  type = "tcp"
+  port = 8080
+  interval = "15s"
+  timeout = "2s"
+  grace_period = "30s"
 
-  [[services.http_checks]]
-    interval = "1h"
-    timeout = "30s"
-    grace_period = "30s"
-    method = "get"
-    path = "/api/system/health"
-    protocol = "http"
-    restart_limit = 0
+  [[services.http_checks]]
+    interval = "1h"
+    timeout = "30s"
+    grace_period = "30s"
+    method = "get"
+    path = "/api/system/health"
+    protocol = "http"
+    restart_limit = 0
 
 [env]
-  # 將非敏感設定移至此處
-  # 注意：JSON 陣列字串中的雙引號需要用反斜線進行轉義
-  TARGET_TEAMS = "[\"台鋼雄鷹\"]"
-  TARGET_PLAYERS = "[\"吳念庭\",\"魔鷹\",\"王柏融\"]"
-  # [新增] 生產環境的前端網域白名單
-  ALLOWED_ORIGINS = "[\"https://your-production-frontend.com\"]"
+  # 將非敏感設定移至此處
+  # 注意：JSON 陣列字串中的雙引號需要用反斜線進行轉義
+  TARGET_TEAMS = "[\"台鋼雄鷹\"]"
+  TARGET_PLAYERS = "[\"吳念庭\",\"魔鷹\",\"王柏融\"]"
+  # [新增] 生產環境的前端網域白名單
+  ALLOWED_ORIGINS = "[\"https://your-production-frontend.com\"]"
