@@ -10,8 +10,6 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.db import get_db
 from app.cache import cache
-
-# [新增] 導入新的例外類別
 from app.exceptions import PlayerNotFoundException, InvalidInputException
 
 
@@ -21,7 +19,6 @@ router = APIRouter(
 )
 
 
-# [新增] 為連線定義建立 Enum
 class StreakDefinition(str, Enum):
     consecutive_hits = "consecutive_hits"
     consecutive_on_base = "consecutive_on_base"
@@ -31,7 +28,11 @@ class StreakDefinition(str, Enum):
 # --- 進階分析 API 端點 ---
 
 
-@router.get("/games-with-players", response_model=List[schemas.GameResult])
+@router.get(
+    "/games-with-players",
+    # [修改] 更新 response_model 為包含 player_summaries 的模型
+    response_model=List[schemas.GameResultWithDetails],
+)
 @cache()
 def get_games_with_players(
     request: Request,
@@ -62,7 +63,6 @@ def get_last_homerun(request: Request, player_name: str, db: Session = Depends(g
 
 @router.get(
     "/players/{player_name}/situational-at-bats",
-    # 【修改】更新 response_model 為新的擴充模型
     response_model=List[schemas.SituationalAtBatDetail],
 )
 @cache()
@@ -79,25 +79,17 @@ def get_situational_at_bats(
         db, player_name, situation, skip=skip, limit=limit
     )
 
-    # 【修改】將 ORM 物件轉換為擴充後的 Pydantic 模型
     results = []
     for ab in at_bats:
         game = ab.player_summary.game
         player_team = ab.player_summary.team_name
-
-        # 判斷對戰球隊
         opponent_team = (
             game.away_team if game.home_team == player_team else game.home_team
         )
-
-        # 【修正】使用 Pydantic 的 model_validate 和 model_dump 來安全地轉換 ORM 物件
         base_at_bat = schemas.AtBatDetail.model_validate(ab)
         result_data = base_at_bat.model_dump()
-
-        # 組合 AtBatDetail 的屬性與額外資訊
         result_data["game_date"] = game.game_date
         result_data["opponent_team"] = opponent_team
-
         results.append(schemas.SituationalAtBatDetail(**result_data))
 
     return results
@@ -166,7 +158,6 @@ def get_on_base_streaks(
     - 若未指定球員或棒次，則回傳所有長度達標的泛用連線。
     """
     if player_names and lineup_positions:
-        # [修改] 改用自訂例外
         raise InvalidInputException(
             message="Cannot specify both player_names and lineup_positions at the same time."
         )

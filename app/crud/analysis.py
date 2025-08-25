@@ -33,6 +33,7 @@ def find_games_with_players(
     games = (
         db.query(models.GameResultDB)
         .filter(models.GameResultDB.id.in_(subquery.select()))
+        .options(joinedload(models.GameResultDB.player_summaries))
         .order_by(models.GameResultDB.game_date.desc())
         .offset(skip)
         .limit(limit)
@@ -44,14 +45,13 @@ def find_games_with_players(
 def get_stats_since_last_homerun(
     db: Session, player_name: str
 ) -> Dict[str, Any] | None:
-    """【修改】查詢指定球員的最後一發全壘打，並計算此後的相關數據。"""
-    # --- 修正第一個查詢：使用明確的 relationship join ---
+    """查詢指定球員的最後一發全壘打，並計算此後的相關數據及生涯數據。"""
     last_hr_at_bat = (
         db.query(models.AtBatDetailDB)
-        .join(models.AtBatDetailDB.player_summary)  # 明確 join
+        .join(models.AtBatDetailDB.player_summary)
         .filter(models.PlayerGameSummaryDB.player_name == player_name)
         .filter(models.AtBatDetailDB.result_description_full.contains("全壘打"))
-        .join(models.PlayerGameSummaryDB.game)  # 明確 join
+        .join(models.PlayerGameSummaryDB.game)
         .order_by(
             models.GameResultDB.game_date.desc(),
             models.AtBatDetailDB.sequence_in_game.desc(),
@@ -65,7 +65,6 @@ def get_stats_since_last_homerun(
     last_hr_game = last_hr_at_bat.player_summary.game
     last_hr_date = last_hr_game.game_date
 
-    # --- 修正第二個查詢：只計算全壘打日期之後的比賽 ---
     stats_since = (
         db.query(
             func.count(models.PlayerGameSummaryDB.game_id.distinct()).label(
@@ -76,13 +75,23 @@ def get_stats_since_last_homerun(
         .join(models.GameResultDB)
         .filter(
             models.PlayerGameSummaryDB.player_name == player_name,
-            # 將 >= 改為 > ，只計算嚴格晚於全壘打日期的比賽
             models.GameResultDB.game_date > last_hr_date,
         )
         .one()
     )
 
-    # 如果 stats_since 查詢結果為 (None, None)，表示沒有後續比賽，手動設為 0
+    career_stats_orm = (
+        db.query(models.PlayerCareerStatsDB)
+        .filter(models.PlayerCareerStatsDB.player_name == player_name)
+        .first()
+    )
+    # [修正] 將 ORM 物件轉換為 Pydantic 模型以確保正確序列化
+    career_stats_pydantic = (
+        schemas.PlayerCareerStats.model_validate(career_stats_orm)
+        if career_stats_orm
+        else None
+    )
+
     games_since_count = stats_since.games_since or 0
     at_bats_since_count = stats_since.at_bats_since or 0
 
@@ -92,6 +101,7 @@ def get_stats_since_last_homerun(
         "days_since": (datetime.date.today() - last_hr_date).days,
         "games_since": games_since_count,
         "at_bats_since": at_bats_since_count,
+        "career_stats": career_stats_pydantic,
     }
 
 
@@ -102,12 +112,11 @@ def find_at_bats_in_situation(
     skip: int = 0,
     limit: int = 100,
 ) -> List[models.AtBatDetailDB]:
-    """【修改】查詢指定球員在特定壘上情境下的所有打席紀錄。"""
+    """查詢指定球員在特定壘上情境下的所有打席紀錄。"""
     query = (
         db.query(models.AtBatDetailDB)
         .join(models.PlayerGameSummaryDB)
         .join(models.GameResultDB)
-        # 【修改】使用 joinedload 預先載入關聯的 game 和 player_summary 物件
         .options(
             joinedload(models.AtBatDetailDB.player_summary).joinedload(
                 models.PlayerGameSummaryDB.game
@@ -161,8 +170,7 @@ def get_summaries_by_position(
 def find_next_at_bats_after_ibb(
     db: Session, player_name: str, skip: int = 0, limit: int = 100
 ) -> List[Dict[str, Any]]:
-    """【V2 版】使用 SQL 窗口函數 (LEAD) 高效查詢指定球員被故意四壞後，同一半局內下一位打者的打席結果。"""
-
+    """使用 SQL 窗口函數 (LEAD) 高效查詢指定球員被故意四壞後，同一半局內下一位打者的打席結果。"""
     at_bat_with_next_subquery = (
         select(
             models.AtBatDetailDB.id.label("at_bat_id"),
@@ -219,17 +227,12 @@ def find_on_base_streaks(
     skip: int = 0,
     limit: int = 100,
 ) -> List[schemas.OnBaseStreak]:
-    """
-    【重構】查詢符合「連線」定義的打席序列。
-    根據是否提供特定球員/棒次，採用不同策略以優化效能。
-    """
-    # 1. 從設定檔取得有效的打席結果列表
+    """查詢符合「連線」定義的打席序列。"""
     valid_results = set(settings.STREAK_DEFINITIONS.get(definition_name, []))
     if not valid_results:
         logging.warning(f"無效的連線定義名稱: {definition_name}")
         return []
 
-    # 2. 建立基礎查詢
     query = (
         db.query(models.AtBatDetailDB)
         .join(models.PlayerGameSummaryDB)
@@ -240,7 +243,6 @@ def find_on_base_streaks(
         )
     )
 
-    # 效能優化：如果提供了球員姓名，則只查詢這些球員參加過的比賽
     if player_names:
         game_ids_subquery = (
             select(models.PlayerGameSummaryDB.game_id)
@@ -249,20 +251,16 @@ def find_on_base_streaks(
         )
         query = query.filter(models.AtBatDetailDB.game_id.in_(game_ids_subquery))
 
-    # 建立最終的、使用優化後排序的查詢
     final_query = query.order_by(
         models.AtBatDetailDB.game_id,
         models.AtBatDetailDB.inning,
         models.AtBatDetailDB.sequence_in_game,
     )
 
-    # 執行查詢
     all_at_bats = final_query.all()
 
-    # 3. 根據查詢類型，選擇不同的處理策略
     all_streaks = []
     if player_names or lineup_positions:
-        # 策略一：尋找符合指定「連續」序列的連線
         target_list = player_names if player_names else lineup_positions
         target_len = len(target_list)
         if target_len < min_length:
@@ -270,39 +268,38 @@ def find_on_base_streaks(
 
         for i in range(len(all_at_bats) - target_len + 1):
             potential_streak = all_at_bats[i : i + target_len]
-
-            # 檢查點 1: 所有打席必須在同一個半局
             first_ab = potential_streak[0]
             if not all(
                 ab.game_id == first_ab.game_id and ab.inning == first_ab.inning
                 for ab in potential_streak
             ):
                 continue
-
-            # 檢查點 2: 所有打席都必須是有效的連線結果
             if not all(ab.result_short in valid_results for ab in potential_streak):
                 continue
 
-            # 檢查點 3: 序列必須完全匹配指定的球員或棒次
-            is_match = True
-            for j, ab in enumerate(potential_streak):
-                if player_names:
-                    if ab.player_summary.player_name != player_names[j]:
-                        is_match = False
-                        break
-                elif lineup_positions:
+            is_match = False
+            if player_names:
+                streak_player_names = {
+                    ab.player_summary.player_name for ab in potential_streak
+                }
+                if streak_player_names == set(player_names):
+                    is_match = True
+            elif lineup_positions:
+                is_lineup_match = True
+                for j, ab in enumerate(potential_streak):
                     try:
                         if int(ab.player_summary.batting_order) != lineup_positions[j]:
-                            is_match = False
+                            is_lineup_match = False
                             break
                     except (ValueError, TypeError):
-                        is_match = False
+                        is_lineup_match = False
                         break
+                if is_lineup_match:
+                    is_match = True
 
             if is_match:
                 all_streaks.append(potential_streak)
     else:
-        # 策略二：尋找所有長度達標的泛用連線
         current_streak = []
         for i, at_bat in enumerate(all_at_bats):
             is_valid = at_bat.result_short in valid_results
@@ -325,13 +322,17 @@ def find_on_base_streaks(
         if len(current_streak) >= min_length:
             all_streaks.append(list(current_streak))
 
-    # 4. 將最終結果格式化為 Pydantic 模型並應用分頁
     paginated_streaks = all_streaks[skip : skip + limit]
     result_models = []
     for streak in paginated_streaks:
         if not streak:
             continue
         game = streak[0].player_summary.game
+        player_team = streak[0].player_summary.team_name
+        opponent_team = (
+            game.away_team if game.home_team == player_team else game.home_team
+        )
+
         at_bat_models = [
             schemas.AtBatDetailForStreak(
                 player_name=ab.player_summary.player_name,
@@ -346,22 +347,19 @@ def find_on_base_streaks(
             game_date=game.game_date,
             inning=streak[0].inning,
             streak_length=len(streak),
+            opponent_team=opponent_team,
             runs_scored_during_streak=sum(ab.runs_scored_on_play for ab in streak),
             at_bats=at_bat_models,
         )
         result_models.append(streak_model)
 
-    # 由於查詢是升序的，為了讓 API 回傳最新的在前面，這裡進行反轉
     return result_models[::-1]
 
 
 def analyze_ibb_impact(
     db: Session, player_name: str, skip: int = 0, limit: int = 100
 ) -> List[schemas.IbbImpactResult]:
-    """
-    【新增】分析指定球員被故意四壞後，對該半局總失分的影響。
-    """
-    # 1. 找出所有與該球員相關的比賽中的所有打席
+    """分析指定球員被故意四壞後，對該半局總失分的影響。"""
     game_ids_subquery = (
         select(models.PlayerGameSummaryDB.game_id)
         .where(models.PlayerGameSummaryDB.player_name == player_name)
@@ -380,15 +378,13 @@ def analyze_ibb_impact(
         .order_by(
             models.PlayerGameSummaryDB.game_id,
             models.AtBatDetailDB.inning,
-            models.AtBatDetailDB.id,  # 使用 id 作為最終排序依據
+            models.AtBatDetailDB.id,
         )
         .all()
     )
 
     results = []
-    # 2. 在 Python 中遍歷所有打席，找出 IBB 事件並計算後續影響
     for i, at_bat in enumerate(all_related_at_bats):
-        # 【修改】增加對 None 的檢查，避免 TypeError
         is_ibb = (
             at_bat.result_description_full
             and "故意四壞" in at_bat.result_description_full
@@ -400,7 +396,6 @@ def analyze_ibb_impact(
             subsequent_at_bats = []
             runs_scored_after = 0
 
-            # 往後查找同一個半局的打席
             for next_ab in all_related_at_bats[i + 1 :]:
                 if (
                     next_ab.player_summary.game_id == ibb_event.player_summary.game_id
@@ -409,11 +404,13 @@ def analyze_ibb_impact(
                     subsequent_at_bats.append(next_ab)
                     runs_scored_after += next_ab.runs_scored_on_play
                 else:
-                    # 進入下一局或下一場比賽，結束查找
                     break
 
-            # 3. 將結果組裝成 Pydantic 模型
             game = ibb_event.player_summary.game
+            player_team = ibb_event.player_summary.team_name
+            opponent_team = (
+                game.away_team if game.home_team == player_team else game.home_team
+            )
 
             ibb_model = schemas.AtBatDetailForStreak(
                 player_name=ibb_event.player_summary.player_name,
@@ -434,12 +431,12 @@ def analyze_ibb_impact(
                 game_id=game.id,
                 game_date=game.game_date,
                 inning=ibb_event.inning,
+                opponent_team=opponent_team,
                 intentional_walk=ibb_model,
                 subsequent_at_bats=subsequent_models,
                 runs_scored_after_ibb=runs_scored_after,
             )
             results.append(impact_result)
 
-    # 由於查詢是升序的，為了讓 API 回傳最新的在前面，這裡進行反轉
     paginated_results = results[::-1][skip : skip + limit]
     return paginated_results
