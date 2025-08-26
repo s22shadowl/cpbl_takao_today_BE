@@ -1,7 +1,9 @@
 services:
   db:
-    image: postgres:15
+    image: postgres:15-alpine
     restart: always
+    # 環境變數直接定義在 service 內部
+    # Docker Compose 會自動讀取專案根目錄下的 .env 檔案來填充這些變數
     environment:
       - POSTGRES_USER=${POSTGRES_USER}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
@@ -10,45 +12,80 @@ services:
       - postgres_data:/var/lib/postgresql/data/
     ports:
       - "127.0.0.1:5432:5432"
+    healthcheck:
+      # healthcheck 內部要使用 $$ 來引用容器內的環境變數
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - takao_network
 
   redis:
     image: redis:7-alpine
     restart: always
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - takao_network
 
   web:
-    build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-    volumes:
-      - .:/code
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: web
+    restart: always
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - DRAMATIQ_BROKER_URL=redis://redis:6379/0
       - REDIS_CACHE_URL=redis://redis:6379/1
       - API_KEY=${API_KEY}
-      # [新增] 將 CORS 設定傳入容器
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - TARGET_TEAM_NAME=${TARGET_TEAM_NAME}
+      - TARGET_TEAMS=${TARGET_TEAMS}
+      - TARGET_PLAYER_NAMES=${TARGET_PLAYER_NAMES}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - takao_network
 
   worker:
-    build: .
-    # [修改] 對應地，將 dramatiq 的內部超時調整為 285 秒
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker
+    restart: always
     command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.workers:redis_broker app.workers --worker-shutdown-timeout 285000"
-    volumes:
-      - .:/code
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:${POSTGRES_PORT}/${POSTGRES_DB}
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - DRAMATIQ_BROKER_URL=redis://redis:6379/0
       - REDIS_CACHE_URL=redis://redis:6379/1
       - E2E_TESTING=true
+      - TARGET_TEAM_NAME=${TARGET_TEAM_NAME}
+      - TARGET_TEAMS=${TARGET_TEAMS}
+      - TARGET_PLAYER_NAMES=${TARGET_PLAYER_NAMES}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - takao_network
+
+networks:
+  takao_network:
+    driver: bridge
 
 volumes:
   postgres_data:

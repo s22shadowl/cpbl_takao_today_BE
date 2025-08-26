@@ -3,7 +3,7 @@ name: Daily Crawl CI
 
 on:
   schedule:
-    # 每日 14:00 UTC (台北時間 22:00) 執行。你可以根據需要調整。
+    # 每日 14:00 UTC (台北時間 22:00) 執行。
     - cron: "0 14 * * *"
   # workflow_dispatch 允許你從 GitHub Actions 頁面手動觸發此 workflow
   workflow_dispatch:
@@ -28,10 +28,21 @@ jobs:
           echo "Waiting 60 seconds for machines to boot..."
           sleep 60
 
+      # [新增] T23: 在觸發爬蟲前，增加健康檢查步驟
+      - name: Wait for Web Service Health Check
+        run: |
+          timeout 180s bash -c ' \
+            until curl -s -f https://cpbl-takao-today-be.fly.dev/api/system/health; \
+            do \
+              echo "Web service is not healthy yet, waiting..."; \
+              sleep 5; \
+            done; \
+            echo "Web service is healthy!"; \
+          ' || (echo "Health check timed out after 3 minutes." && exit 1)
+
       - name: Trigger Crawl Task and Get Task ID
         id: trigger
         run: |
-          # 請將下面的 your-app-domain.fly.dev 替換為你的 Web 服務的真實網域
           API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-daily-crawl"
 
           # 使用 jq 來解析 JSON 回應並獲取 task_id
@@ -42,14 +53,13 @@ jobs:
           # 將 task_id 設為後續步驟可用的輸出
           echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
 
-      # --- ▼▼▼ 新增/修改: 輪詢監控任務狀態 ▼▼▼ ---
       - name: Monitor Task Status
         if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
         run: |
           TASK_ID=${{ steps.trigger.outputs.task_id }}
           STATUS_URL="https://cpbl-takao-today-be.fly.dev/api/system/task-status/$TASK_ID"
 
-          # 設定超時時間 (例如 30 分鐘 = 1800 秒)
+          # 設定超時時間 (30 分鐘 = 1800 秒)
           TIMEOUT=1800
           # 設定輪詢間隔 (30 秒)
           INTERVAL=30
@@ -87,7 +97,7 @@ jobs:
           # 如果希望超時也讓 workflow 失敗，可以取消下一行的註解
           # exit 1
           exit 0
-      # --- ▲▲▲ 新增/修改: 輪詢監控任務狀態 ▲▲▲ ---
+
       - name: Stop Machines (Always Run)
         # `if: always()` 確保無論前面步驟成功或失敗，此步驟都會執行，以節省成本。
         if: always()

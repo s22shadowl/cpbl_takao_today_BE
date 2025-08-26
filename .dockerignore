@@ -1,2 +1,38 @@
-fly.toml
+# Git
+.git
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose.yml
+
+# Python virtual environment and cache
+venv
 .venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Tooling cache and configuration
+.pytest_cache
+.ruff_cache
+.vscode
+.idea
+.pre-commit-config.yaml
+
+# Local environment and logs
+.env
+.env.*
+logs/
+*.log
+
+# Project artifacts and documentation
+docs/
+tests/
+scripts/
+README.md
+
+# Fly.io
+fly.toml

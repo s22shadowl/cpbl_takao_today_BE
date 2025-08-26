@@ -6,16 +6,16 @@
 # 步驟一：爬取「比賽」資料至「暫存資料庫」
 # 此步驟會將指定日期範圍的歷史比賽數據，爬取並儲存到 Docker 環境中的暫存資料庫。
 # 指令：
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start YYYY-MM-DD --end YYYY-MM-DD"
+# docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start YYYY-MM-DD --end YYYY-MM-DD"
 # 範例：
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2025-03-01 --end 2025-04-30"
+# docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2025-03-01 --end 2025-04-30"
 
 # --- 輔助流程 ---
 
 # (可選) 步驟 A：爬取「球員生涯」資料至「暫存資料庫」
 # 此步驟會爬取球隊名單上所有球員的生涯數據，並存入暫存資料庫。通常在 scrape 後執行，或用於手動更新所有球員的生涯數據。
 # 指令：
-# docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape-career"
+# docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape-career"
 
 # --- 最終流程 ---
 
@@ -26,7 +26,7 @@
 # 步驟三：從「暫存資料庫」上傳至「生產資料庫」
 # 在確認步驟二的資料完全無誤後，執行此指令。它會讀取暫存資料庫中的所有資料，並將其同步 (merge) 至雲端上的生產資料庫。
 # 指令：
-# docker compose run --rm web sh -c "python -m scripts.bulk_import upload"
+# docker compose run --rm worker sh -c "python -m scripts.bulk_import upload"
 
 import datetime
 import logging

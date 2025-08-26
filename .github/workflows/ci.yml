@@ -76,6 +76,7 @@ jobs:
           TARGET_TEAM_NAME: "台鋼雄鷹"
           TARGET_TEAMS: '["台鋼雄鷹"]'
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
+          ALLOWED_ORIGINS: '["*"]'
         run: |
           pytest -m "not e2e and not canary"
 
@@ -90,6 +91,7 @@ jobs:
           TARGET_TEAM_NAME: "台鋼雄鷹"
           TARGET_TEAMS: '["台鋼雄鷹"]'
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
+          ALLOWED_ORIGINS: '["*"]'
         run: |
           echo "Starting Web server..."
           uvicorn app.main:app --host 0.0.0.0 --port $PORT > web.log 2>&1 &

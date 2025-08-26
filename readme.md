@@ -89,6 +89,7 @@ graph TD
 ### 本地測試指南
 
 若需在本地開發環境測試此流程，可依序手動模擬 GHA 的行為：
+
 1.  啟動本地服務: `docker compose up -d`
 2.  手動觸發任務: `curl -X POST http://127.0.0.1:8000/api/system/trigger-daily-crawl -H "X-API-Key: your_secret_api_key_here"`，並記下回傳的 `task_id`。
 3.  手動查詢狀態: `curl http://127.0.0.1:8000/api/system/task-status/{your_task_id} -H "X-API-Key: your_secret_api_key_here"`。
@@ -111,19 +112,19 @@ graph TD
 
 | 類別                   | 技術                                   |
 | ---------------------- | -------------------------------------- |
-| **後端框架** | FastAPI, Uvicorn                       |
-| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic  |
-| **背景任務 / 快取** | Dramatiq, Redis (Aiven)                |
-| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests   |
-| **容器化** | Docker, Docker Compose                 |
-| **雲端平台** | Fly.io                                 |
+| **後端框架**           | FastAPI, Uvicorn                       |
+| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
+| **背景任務 / 快取**    | Dramatiq, Redis (Aiven)                |
+| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
+| **容器化**             | Docker, Docker Compose                 |
+| **雲端平台**           | Fly.io                                 |
 | **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
-| **測試框架** | pytest, pytest-mock, pytest-playwright |
-| **負載測試** | Locust                                 |
-| **設定管理** | pydantic-settings                      |
-| **日誌** | python-json-logger                     |
-| **虛擬顯示** | Xvfb (X virtual framebuffer)           |
-| **依賴項安全** | pip-audit                              |
+| **測試框架**           | pytest, pytest-mock, pytest-playwright |
+| **負載測試**           | Locust                                 |
+| **設定管理**           | pydantic-settings                      |
+| **日誌**               | python-json-logger                     |
+| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
+| **依賴項安全**         | pip-audit                              |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -151,6 +152,7 @@ cp .env.example .env
 本專案的組態管理遵循職責分離原則：
 
 - **敏感資訊 (Secrets)**: 如 `DATABASE_URL`, `API_KEY` 等。這類資訊**絕不**能提交至版本控制。
+
   - **生產環境**: 由 Fly.io 的 Secrets 功能管理 (`fly secrets set`)。
   - **CI/CD 流程**: 由 GitHub Actions 的 Secrets 提供。
   - **本地開發**: 存放於 `.env` 檔案中 (此檔案已被 `.gitignore` 排除)。
@@ -177,7 +179,7 @@ cp .env.example .env
 
     ```bash
     # 在 web 容器中執行 alembic upgrade 指令
-    docker compose run --rm web alembic upgrade head
+    docker compose run --rm worker alembic upgrade head
     ```
 
 3.  **首次初始化賽程**:
@@ -215,7 +217,7 @@ cp .env.example .env
 **指令格式:**
 
 ```bash
-docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape [OPTIONS]"
+docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape [OPTIONS]"
 ```
 
 **Options:**
@@ -227,10 +229,10 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
 **範例:** 爬取 2024 年 4 月 1 日至 10 日的數據
 
 ```bash
-docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2024-04-01 --end 2024-04-10"
+docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start 2024-04-01 --end 2024-04-10"
 ```
 
-此指令會在 `web` 容器中執行腳本，並將結果存入由 `DATABASE_URL` 指定的資料庫。
+此指令會在 `worker` 容器中執行腳本，並將結果存入由 `DATABASE_URL` 指定的資料庫。
 
 ## 資料庫遷移 (Database Migrations)
 
@@ -240,14 +242,14 @@ docker compose run --rm web sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISP
 
   ```bash
   # 在 web 容器中自動產生遷移腳本
-  docker compose run --rm web alembic revision --autogenerate -m "描述你的變更"
+  docker compose run --rm worker alembic revision --autogenerate -m "描述你的變更"
   ```
 
 - **將變更應用到資料庫**:
 
   ```bash
   # 在 web 容器中執行 upgrade
-  docker compose run --rm web alembic upgrade head
+  docker compose run --rm worker alembic upgrade head
   ```
 
 ## 程式碼品質與 CI/CD

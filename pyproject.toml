@@ -4,3 +4,43 @@ markers = [
     "e2e: marks tests as end-to-end tests",
     "canary: Runs canary tests that hit the live CPBL website.",
 ]
+
+[tool.poetry]
+name = "cpbl-takao-today-be"
+version = "0.1.0"
+description = "CPBL Data Backend Project"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.111.0"
+uvicorn = {extras = ["standard"], version = "^0.29.0"}
+sqlalchemy = "^2.0.29"
+psycopg2-binary = "^2.9.9"
+alembic = "^1.13.1"
+dramatiq = {extras = ["redis"], version = "^1.15.0"}
+
+beautifulsoup4 = "^4.12.3"
+requests = "^2.31.0"
+pydantic-settings = "^2.2.1"
+python-json-logger = "^2.0.7"
+redis = "^5.0.4"
+# [新增] 加入 pytz 依賴
+pytz = "^2024.1"
+
+# [新增] 為 worker 建立獨立的依賴項群組
+[tool.poetry.group.worker.dependencies]
+playwright = "^1.44.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.2.0"
+pytest-mock = "^3.12.0"
+pytest-playwright = "^0.4.4"
+locust = "^2.26.0"
+pip-audit = "^2.7.2"
+ruff = "^0.4.4"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
