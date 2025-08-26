@@ -2,13 +2,13 @@
 
 import logging.config
 from pathlib import Path
-from pythonjsonlogger import jsonlogger
+from pythonjsonlogger import json
 
 from app.utils.request_context import request_id_var
 
 
 # 建立一個自訂的 Formatter，它會自動加入 request_id
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
+class CustomJsonFormatter(json.JsonFormatter):
     def add_fields(self, log_record, record, message_dict):
         super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
         # 從 contextvars 獲取 request_id

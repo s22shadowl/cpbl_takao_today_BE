@@ -37,9 +37,14 @@ kill_timeout = "300s"
     hard_limit = 200
     soft_limit = 150
 
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
+  # [T26 修正]
+  # 調整以下設定以符合 GHA 驅動的 Scale-to-zero 架構
+  # auto_stop_machines 設為 true，允許機器在閒置時自動停止
+  # auto_start_machines 設為 false，避免外部請求意外啟動機器，將啟動權完全交由 GHA
+  # min_machines_running 設為 0，確保在沒有任務時，不會有任何機器保持運行
+  auto_stop_machines = true
+  auto_start_machines = false
+  min_machines_running = 0
 
   [[services.checks]]
     type = "tcp"
