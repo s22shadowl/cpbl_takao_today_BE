@@ -31,7 +31,6 @@ logs/
 # Project artifacts and documentation
 docs/
 tests/
-scripts/
 README.md
 
 # Fly.io

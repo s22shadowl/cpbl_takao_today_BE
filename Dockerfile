@@ -13,27 +13,25 @@ RUN pip install poetry
 COPY pyproject.toml poetry.lock ./
 RUN poetry install --no-root
 
-# Stage 2: playwright_base - 在 base 基礎上安裝 Playwright 瀏覽器
+# Stage 2: playwright_base - 在 base 基礎上安裝 Playwright 瀏覽器與系統依賴
 FROM base AS playwright_base
 # [修正] 將虛擬環境的路徑加入 PATH，才能找到 playwright 指令
 ENV PATH="/code/.venv/bin:$PATH"
+# --with-deps 會一併安裝 Xvfb 等必要的系統套件
 RUN playwright install --with-deps chromium
 
 # Stage 3: web - 生產環境用的 web image
-FROM python:3.11-slim-bullseye AS web
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# 這個 stage 不需要 Playwright，所以直接繼承 base 即可
+FROM base AS web
 WORKDIR /code
-COPY --from=base /code/.venv ./.venv
+# [優化] 直接從 base stage 複製整個 /code 目錄，包含 .venv
+COPY --from=base /code /code
 ENV PATH="/code/.venv/bin:$PATH"
 COPY . .
 
 # Stage 4: worker - 生產環境用的 worker image
-FROM python:3.11-slim-bullseye AS worker
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+# [修正] 直接繼承 playwright_base，這樣才會包含 Xvfb 等系統依賴
+FROM playwright_base AS worker
 WORKDIR /code
-COPY --from=playwright_base /code/.venv ./.venv
-COPY --from=playwright_base /root/.cache/ms-playwright /root/.cache/ms-playwright
-ENV PATH="/code/.venv/bin:$PATH"
+# [優化] playwright_base 已經包含所有需要的東西，只需複製最新的應用程式碼
 COPY . .

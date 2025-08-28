@@ -357,7 +357,7 @@ def generate_readme_content():
 
     # 計算出專案根目錄的路徑
     project_root = Path(__file__).parent.parent
-    output_file_path = project_root / "readme.md"
+    output_file_path = project_root / "README.md"
 
     # 將內容寫入檔案，使用 "w" 模式會直接覆蓋
     try:
@@ -365,7 +365,7 @@ def generate_readme_content():
             f.write(readme_markdown)
 
         # 在終端機回報成功訊息
-        print(f"✅ readme.md has been successfully updated at: {output_file_path}")
+        print(f"✅ README.md has been successfully updated at: {output_file_path}")
 
     except IOError as e:
         print(f"❌ Error writing to file {output_file_path}: {e}")

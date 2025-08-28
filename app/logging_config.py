@@ -2,13 +2,13 @@
 
 import logging.config
 from pathlib import Path
-from pythonjsonlogger import json
+from pythonjsonlogger import jsonlogger
 
 from app.utils.request_context import request_id_var
 
 
 # 建立一個自訂的 Formatter，它會自動加入 request_id
-class CustomJsonFormatter(json.JsonFormatter):
+class CustomJsonFormatter(jsonlogger.JsonFormatter):
     def add_fields(self, log_record, record, message_dict):
         super(CustomJsonFormatter, self).add_fields(log_record, record, message_dict)
         # 從 contextvars 獲取 request_id
@@ -34,6 +34,7 @@ LOGGING_CONFIG = {
         "json": {
             # 使用我們自訂的 Formatter
             "()": "app.logging_config.CustomJsonFormatter",
+            "format": "%(asctime)s %(name)s %(levelname)s %(message)s",
             # [新增] 解決 JSON 日誌中文字元變成 \uXXXX 的問題
             "json_ensure_ascii": False,
             # --- 修改: 移除固定的 format 字串，讓 formatter 自動包含所有欄位 ---
