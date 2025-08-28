@@ -1,3 +1,5 @@
+# app/schemas.py
+
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal, Optional, List, Union
 import datetime
@@ -77,6 +79,16 @@ class GameResult(BaseModel):
     away_score: Optional[int] = None
     venue: Optional[str] = None
     status: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# [T29 新增] 用於 /games/season 端點的回應模型
+class SeasonGame(BaseModel):
+    game_date: datetime.date
+    game_id: int
+    home_team: str
+    away_team: str
 
     model_config = ConfigDict(from_attributes=True)
 

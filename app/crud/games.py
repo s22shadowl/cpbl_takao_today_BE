@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 from sqlalchemy.orm import Session, joinedload
 from typing import Sequence
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, extract
 
 from app import models
 
@@ -219,3 +219,25 @@ def get_last_completed_game_for_teams(
     )
     # 修正: 加入 .unique() 並使用 .scalars().first() 取得單一 ORM 物件
     return db.execute(statement).unique().scalars().first()
+
+
+# [T29 新增] 根據年份與球隊名稱查詢賽果
+def get_games_by_year_and_team(
+    db: Session, *, year: int, team_name: str, completed_only: bool
+) -> list[models.GameResultDB]:
+    """
+    查詢指定年份和球隊的所有賽果。
+    """
+    query = db.query(models.GameResultDB).filter(
+        extract("year", models.GameResultDB.game_date) == year,
+        or_(
+            models.GameResultDB.home_team == team_name,
+            models.GameResultDB.away_team == team_name,
+        ),
+    )
+
+    if completed_only:
+        query = query.filter(models.GameResultDB.status == "已完成")
+
+    # GameResultDB 的 id 欄位才是 game_id
+    return query.order_by(models.GameResultDB.game_date, models.GameResultDB.id).all()

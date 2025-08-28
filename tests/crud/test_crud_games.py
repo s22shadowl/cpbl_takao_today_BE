@@ -391,3 +391,74 @@ def test_get_last_completed_game_for_teams(db_session):
         db, ["不存在的隊伍"], reference_date
     )
     assert no_result_game is None
+
+
+# [T29 新增] 測試 get_games_by_year_and_team 函式
+def test_get_games_by_year_and_team(db_session):
+    """測試 get_games_by_year_and_team 是否能根據年份、隊伍和完成狀態正確篩選"""
+    db = db_session
+    team_name = "測試雄鷹"
+    # 準備測試資料
+    game1 = models.GameResultDB(
+        game_date=datetime.date(2025, 4, 1),
+        home_team=team_name,
+        away_team="測試龍",
+        status="已完成",
+    )
+    game2 = models.GameResultDB(
+        game_date=datetime.date(2025, 4, 2),
+        home_team="測試獅",
+        away_team=team_name,
+        status="已完成",
+    )
+    game3 = models.GameResultDB(
+        game_date=datetime.date(2025, 4, 3),
+        home_team=team_name,
+        away_team="測試象",
+        status="未開始",
+    )
+    game4 = models.GameResultDB(
+        game_date=datetime.date(2024, 5, 5),  # 不同年份
+        home_team=team_name,
+        away_team="測試猿",
+        status="已完成",
+    )
+    game5 = models.GameResultDB(
+        game_date=datetime.date(2025, 6, 6),  # 無關隊伍
+        home_team="測試悍將",
+        away_team="測試龍",
+        status="已完成",
+    )
+    db.add_all([game1, game2, game3, game4, game5])
+    db.commit()
+
+    # 測試情境 1: 取得 2025 年該隊伍的所有賽果
+    results_all = games.get_games_by_year_and_team(
+        db, year=2025, team_name=team_name, completed_only=False
+    )
+    assert len(results_all) == 3
+    assert {g.home_team for g in results_all if g.home_team != team_name} == {"測試獅"}
+    assert {g.away_team for g in results_all if g.away_team != team_name} == {
+        "測試龍",
+        "測試象",
+    }
+
+    # 測試情境 2: 只取得 2025 年該隊伍已完成的比賽
+    results_completed = games.get_games_by_year_and_team(
+        db, year=2025, team_name=team_name, completed_only=True
+    )
+    assert len(results_completed) == 2
+    assert all(g.status == "已完成" for g in results_completed)
+
+    # 測試情境 3: 取得 2024 年的比賽
+    results_2024 = games.get_games_by_year_and_team(
+        db, year=2024, team_name=team_name, completed_only=False
+    )
+    assert len(results_2024) == 1
+    assert results_2024[0].id == game4.id
+
+    # 測試情境 4: 查詢不存在的隊伍
+    results_no_team = games.get_games_by_year_and_team(
+        db, year=2025, team_name="不存在的隊伍", completed_only=False
+    )
+    assert len(results_no_team) == 0

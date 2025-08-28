@@ -193,3 +193,70 @@ def test_get_game_details_player_with_no_at_bats(
     player_summary = data["player_summaries"][0]
     assert player_summary["player_name"] == "代跑哥"
     assert player_summary["at_bat_details"] == []
+
+
+# [T29 新增] 測試 /api/games/season 端點
+def test_get_season_games(client: TestClient, db_session: Session, monkeypatch):
+    """測試 /api/games/season 端點的各種情境"""
+    # Mock settings
+    monkeypatch.setattr("app.config.settings.TARGET_TEAMS", ["測試雄鷹"])
+    team_name = "測試雄鷹"
+
+    # 準備測試資料
+    game1 = models.GameResultDB(
+        id=1,
+        game_date=datetime.date(2025, 4, 1),
+        home_team=team_name,
+        away_team="測試龍",
+        status="已完成",
+    )
+    game2 = models.GameResultDB(
+        id=2,
+        game_date=datetime.date(2025, 4, 2),
+        home_team="測試獅",
+        away_team=team_name,
+        status="已完成",
+    )
+    game3 = models.GameResultDB(
+        id=3,
+        game_date=datetime.date(2025, 4, 3),
+        home_team=team_name,
+        away_team="測試象",
+        status="未開始",
+    )
+    game4 = models.GameResultDB(
+        id=4,
+        game_date=datetime.date(2024, 5, 5),
+        home_team=team_name,
+        away_team="測試猿",
+        status="已完成",
+    )
+    db_session.add_all([game1, game2, game3, game4])
+    db_session.commit()
+
+    # 測試情境 1: 預設參數 (今年, all)
+    # 假設今年是 2025
+    response_default = client.get("/api/games/season?year=2025")
+    assert response_default.status_code == 200
+    data_default = response_default.json()
+    assert len(data_default) == 3
+    assert {d["game_id"] for d in data_default} == {1, 2, 3}
+
+    # 測試情境 2: 指定年份
+    response_2024 = client.get("/api/games/season?year=2024")
+    assert response_2024.status_code == 200
+    data_2024 = response_2024.json()
+    assert len(data_2024) == 1
+    assert data_2024[0]["game_id"] == 4
+
+    # 測試情境 3: 只看已完成
+    response_completed = client.get("/api/games/season?year=2025&completed_only=true")
+    assert response_completed.status_code == 200
+    data_completed = response_completed.json()
+    assert len(data_completed) == 2
+    assert {d["game_id"] for d in data_completed} == {1, 2}
+
+    # 測試情境 4: 查無資料
+    response_no_data = client.get("/api/games/season?year=2026")
+    assert response_no_data.status_code == 200
+    assert response_no_data.json() == []
