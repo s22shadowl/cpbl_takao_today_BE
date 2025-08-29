@@ -21,6 +21,38 @@ router = APIRouter(
 )
 
 
+# [新增] 通用的字串轉布林值工具函式
+def to_boolean(value: any) -> bool:
+    """
+    一個穩健的工具函式，用於將各種輸入轉換為布林值。
+
+    Python 的 `distutils.util.strtobool` 曾是處理此問題的常用工具，但它已被棄用。
+    此自訂函式提供了一個無依賴、穩健的替代方案，可將各種常見的字串
+    （如 'true', '1', 'yes'）轉換為布林值 True，其餘情況則為 False。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ("true", "1", "t", "y", "yes")
+    # 對於其他情況 (例如整數 0 或 1)，標準的 bool() 轉換是安全的。
+    return bool(value)
+
+
+# [修改] 依賴項函式現在呼叫上面的工具函式，保持自身簡潔
+def process_completed_only_param(
+    # [核心修正] 將型別提示從 Any 改為 str，以明確告知 FastAPI 期望接收原始字串，
+    # 從而繞過其內建的布林驗證，讓我們的 to_boolean 邏輯可以處理任意字串。
+    completed_only: str = Query(
+        default=False,
+        description="是否只回傳已完成的比賽。接受 true/false, 1/0, t/f 等常見布林值表示法。",
+    ),
+) -> bool:
+    """
+    FastAPI 依賴項，呼叫 to_boolean 工具函式來處理查詢參數。
+    """
+    return to_boolean(completed_only)
+
+
 # [T29 修正] 調整路由順序
 # 將更具體的 /schedule 路由移至通用路由 /{game_date} 之前
 @router.get(
@@ -38,10 +70,7 @@ def get_season_games(
         default_factory=lambda: datetime.datetime.now().year,
         description="查詢的年份，預設為今年。",
     ),
-    completed_only: bool = Query(
-        default=False,
-        description="是否只回傳已完成的比賽。",
-    ),
+    completed_only: bool = Depends(process_completed_only_param),
 ):
     """
     提供前端日曆圖表所需的全域賽果資料。

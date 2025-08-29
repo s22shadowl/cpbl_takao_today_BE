@@ -1,6 +1,7 @@
 # tests/api/test_api_games.py
 
 import datetime
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 from app.crud import games
@@ -72,7 +73,6 @@ def test_get_games_by_date_not_found(client: TestClient):
 def test_get_games_by_date_bad_format(client: TestClient):
     """測試 /api/games/{game_date} 端點在傳入錯誤日期格式時的情況"""
     response = client.get("/api/games/2025-06-21-invalid")
-    # [修改] 驗證新的錯誤狀態碼與回應格式
     assert response.status_code == 400
     json_response = response.json()
     assert json_response["code"] == APIErrorCode.INVALID_INPUT.value
@@ -143,7 +143,6 @@ def test_get_game_details_success(client: TestClient, db_session: Session):
 def test_get_game_details_not_found(client: TestClient):
     """測試查詢不存在的比賽 ID 時返回 404"""
     response = client.get("/api/games/details/9999")
-    # [修改] 驗證新的錯誤狀態碼與回應格式
     assert response.status_code == 404
     json_response = response.json()
     assert json_response["code"] == APIErrorCode.RESOURCE_NOT_FOUND.value
@@ -195,68 +194,109 @@ def test_get_game_details_player_with_no_at_bats(
     assert player_summary["at_bat_details"] == []
 
 
-# [T29 新增] 測試 /api/games/season 端點
-def test_get_season_games(client: TestClient, db_session: Session, monkeypatch):
-    """測試 /api/games/season 端點的各種情境"""
-    # Mock settings
-    monkeypatch.setattr("app.config.settings.TARGET_TEAMS", ["測試雄鷹"])
+# [T29 重構] 使用 parametrize 優化 /api/games/season 的測試
+@pytest.fixture(scope="function")
+def setup_season_games(db_session: Session):
+    """準備 /season 測試用的資料，並在測試結束後清理。"""
     team_name = "測試雄鷹"
-
-    # 準備測試資料
-    game1 = models.GameResultDB(
-        id=1,
-        game_date=datetime.date(2025, 4, 1),
-        home_team=team_name,
-        away_team="測試龍",
-        status="已完成",
-    )
-    game2 = models.GameResultDB(
-        id=2,
-        game_date=datetime.date(2025, 4, 2),
-        home_team="測試獅",
-        away_team=team_name,
-        status="已完成",
-    )
-    game3 = models.GameResultDB(
-        id=3,
-        game_date=datetime.date(2025, 4, 3),
-        home_team=team_name,
-        away_team="測試象",
-        status="未開始",
-    )
-    game4 = models.GameResultDB(
-        id=4,
-        game_date=datetime.date(2024, 5, 5),
-        home_team=team_name,
-        away_team="測試猿",
-        status="已完成",
-    )
-    db_session.add_all([game1, game2, game3, game4])
+    games_to_create = [
+        models.GameResultDB(
+            id=1,
+            game_date=datetime.date(2025, 4, 1),
+            home_team=team_name,
+            away_team="測試龍",
+            status="已完成",
+        ),
+        models.GameResultDB(
+            id=2,
+            game_date=datetime.date(2025, 4, 2),
+            home_team="測試獅",
+            away_team=team_name,
+            status="已完成",
+        ),
+        models.GameResultDB(
+            id=3,
+            game_date=datetime.date(2025, 4, 3),
+            home_team=team_name,
+            away_team="測試象",
+            status="未開始",
+        ),
+        models.GameResultDB(
+            id=4,
+            game_date=datetime.date(2024, 5, 5),
+            home_team=team_name,
+            away_team="測試猿",
+            status="已完成",
+        ),
+    ]
+    db_session.add_all(games_to_create)
     db_session.commit()
+    # 使用 yield 將控制權交還給測試函式
+    yield
+    # 測試結束後，清理資料 (可選，根據你的測試策略)
+    # for game in games_to_create:
+    #     db_session.delete(game)
+    # db_session.commit()
 
-    # 測試情境 1: 預設參數 (今年, all)
-    # 假設今年是 2025
-    response_default = client.get("/api/games/season?year=2025")
-    assert response_default.status_code == 200
-    data_default = response_default.json()
-    assert len(data_default) == 3
-    assert {d["game_id"] for d in data_default} == {1, 2, 3}
 
-    # 測試情境 2: 指定年份
-    response_2024 = client.get("/api/games/season?year=2024")
-    assert response_2024.status_code == 200
-    data_2024 = response_2024.json()
-    assert len(data_2024) == 1
-    assert data_2024[0]["game_id"] == 4
+@pytest.mark.parametrize(
+    "query_params, expected_game_ids, description",
+    [
+        (
+            "year=2025",
+            {1, 2, 3},
+            "預設 completed_only (應為 False)，查詢 2025 年所有比賽",
+        ),
+        ("year=2024", {4}, "查詢 2024 年所有比賽"),
+        (
+            "year=2025&completed_only=true",
+            {1, 2},
+            "查詢 2025 年已完成的比賽 (布林 true)",
+        ),
+        (
+            "year=2025&completed_only=false",
+            {1, 2, 3},
+            "查詢 2025 年所有比賽 (布林 false)",
+        ),
+        ("year=2025&completed_only=1", {1, 2}, "查詢 2025 年已完成的比賽 (字串 '1')"),
+        ("year=2025&completed_only=0", {1, 2, 3}, "查詢 2025 年所有比賽 (字串 '0')"),
+        ("year=2025&completed_only=t", {1, 2}, "查詢 2025 年已完成的比賽 (字串 't')"),
+        ("year=2025&completed_only=f", {1, 2, 3}, "查詢 2025 年所有比賽 (字串 'f')"),
+        (
+            "year=2025&completed_only=yes",
+            {1, 2},
+            "查詢 2025 年已完成的比賽 (字串 'yes')",
+        ),
+        ("year=2025&completed_only=no", {1, 2, 3}, "查詢 2025 年所有比賽 (字串 'no')"),
+        (
+            "year=2025&completed_only=nonsense",
+            {1, 2, 3},
+            "查詢 2025 年所有比賽 (任意字串)",
+        ),
+        ("year=2026", set(), "查詢沒有資料的年份"),
+    ],
+)
+def test_get_season_games(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch,
+    setup_season_games,  # 注入 fixture 來建立資料
+    query_params: str,
+    expected_game_ids: set,
+    description: str,
+):
+    """
+    測試 /api/games/season 端點的各種情境。
+    使用 @pytest.mark.parametrize 來減少重複程式碼。
+    """
+    monkeypatch.setattr("app.config.settings.TARGET_TEAMS", ["測試雄鷹"])
 
-    # 測試情境 3: 只看已完成
-    response_completed = client.get("/api/games/season?year=2025&completed_only=true")
-    assert response_completed.status_code == 200
-    data_completed = response_completed.json()
-    assert len(data_completed) == 2
-    assert {d["game_id"] for d in data_completed} == {1, 2}
+    response = client.get(f"/api/games/season?{query_params}")
 
-    # 測試情境 4: 查無資料
-    response_no_data = client.get("/api/games/season?year=2026")
-    assert response_no_data.status_code == 200
-    assert response_no_data.json() == []
+    assert response.status_code == 200
+    data = response.json()
+
+    # 將回傳結果中的 game_id 轉換為 set 以便比對，忽略順序
+    response_game_ids = {item["game_id"] for item in data}
+
+    assert response_game_ids == expected_game_ids, f"測試失敗: {description}"
