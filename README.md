@@ -12,6 +12,7 @@
 - **歷史數據追蹤**: 記錄球員球季數據的歷史快照，可供分析其表現趨勢。
 - **高效能 API**: 透過資料庫查詢優化與應用層快取，確保複雜的分析型 API 也能快速回應。
 - **穩健的背景任務**: 使用 Dramatiq 與 Redis，將耗時的爬蟲工作與 API 伺服器分離。
+- **現代化依賴項管理**: 全面採用 Poetry 進行精確、可重複的依賴項管理，以 `pyproject.toml` 作為唯一事實來源。
 - **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力，並內建互動式 API 文件。
 - **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。
 - **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。
@@ -110,21 +111,22 @@ graph TD
 
 ## 技術棧 (Tech Stack)
 
-| 類別                   | 技術                                   |
-| ---------------------- | -------------------------------------- |
-| **後端框架**           | FastAPI, Uvicorn                       |
-| **資料庫**             | PostgreSQL, SQLAlchemy (ORM), Alembic  |
-| **背景任務 / 快取**    | Dramatiq, Redis (Aiven)                |
-| **網頁爬蟲**           | Playwright, BeautifulSoup4, Requests   |
-| **容器化**             | Docker, Docker Compose                 |
-| **雲端平台**           | Fly.io                                 |
-| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |
-| **測試框架**           | pytest, pytest-mock, pytest-playwright |
-| **負載測試**           | Locust                                 |
-| **設定管理**           | pydantic-settings                      |
-| **日誌**               | python-json-logger                     |
-| **虛擬顯示**           | Xvfb (X virtual framebuffer)           |
-| **依賴項安全**         | pip-audit                              |
+| 類別                 | 技術                                     |
+| ---------------------- | ---------------------------------------- |
+| **後端框架** | FastAPI, Uvicorn                         |
+| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic    |
+| **背景任務 / 快取** | Dramatiq, Redis (Aiven)                  |
+| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests     |
+| **容器化** | Docker, Docker Compose                   |
+| **雲端平台** | Fly.io                                   |
+| **依賴項管理** | Poetry                                   |
+| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff         |
+| **測試框架** | pytest, pytest-mock, pytest-playwright   |
+| **負載測試** | Locust                                   |
+| **設定管理** | pydantic-settings                        |
+| **日誌** | python-json-logger                       |
+| **虛擬顯示** | Xvfb (X virtual framebuffer)             |
+| **依賴項安全** | pip-audit                                |
 
 ## 本地開發環境設定 (Local Development Setup)
 
@@ -152,7 +154,6 @@ cp .env.example .env
 本專案的組態管理遵循職責分離原則：
 
 - **敏感資訊 (Secrets)**: 如 `DATABASE_URL`, `API_KEY` 等。這類資訊**絕不**能提交至版本控制。
-
   - **生產環境**: 由 Fly.io 的 Secrets 功能管理 (`fly secrets set`)。
   - **CI/CD 流程**: 由 GitHub Actions 的 Secrets 提供。
   - **本地開發**: 存放於 `.env` 檔案中 (此檔案已被 `.gitignore` 排除)。

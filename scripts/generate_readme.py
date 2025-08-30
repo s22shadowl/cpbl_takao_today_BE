@@ -24,6 +24,7 @@ def generate_readme_content():
         "- **歷史數據追蹤**: 記錄球員球季數據的歷史快照，可供分析其表現趨勢。",
         "- **高效能 API**: 透過資料庫查詢優化與應用層快取，確保複雜的分析型 API 也能快速回應。",
         "- **穩健的背景任務**: 使用 Dramatiq 與 Redis，將耗時的爬蟲工作與 API 伺服器分離。",
+        "- **現代化依賴項管理**: 全面採用 Poetry 進行精確、可重複的依賴項管理，以 `pyproject.toml` 作為唯一事實來源。",
         "- **豐富的 RESTful API**: 基於 FastAPI，提供多層次的數據查詢與分析能力，並內建互動式 API 文件。",
         "- **容器化開發與部署**: 使用 Docker 與 Docker Compose 建立標準化的開發與生產環境。",
         "- **資料庫版本控制**: 使用 Alembic 管理資料庫結構的遷移。",
@@ -101,6 +102,7 @@ def generate_readme_content():
         "### 本地測試指南",
         "",
         "若需在本地開發環境測試此流程，可依序手動模擬 GHA 的行為：",
+        "",
         "1.  啟動本地服務: `docker compose up -d`",
         '2.  手動觸發任務: `curl -X POST http://127.0.0.1:8000/api/system/trigger-daily-crawl -H "X-API-Key: your_secret_api_key_here"`，並記下回傳的 `task_id`。',
         '3.  手動查詢狀態: `curl http://127.0.0.1:8000/api/system/task-status/{your_task_id} -H "X-API-Key: your_secret_api_key_here"`。',
@@ -121,21 +123,22 @@ def generate_readme_content():
         "",
         "## 技術棧 (Tech Stack)",
         "",
-        "| 類別                   | 技術                                   |",
-        "| ---------------------- | -------------------------------------- |",
-        "| **後端框架** | FastAPI, Uvicorn                       |",
-        "| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic  |",
-        "| **背景任務 / 快取** | Dramatiq, Redis (Aiven)                |",
-        "| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests   |",
-        "| **容器化** | Docker, Docker Compose                 |",
-        "| **雲端平台** | Fly.io                                 |",
-        "| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff       |",
-        "| **測試框架** | pytest, pytest-mock, pytest-playwright |",
-        "| **負載測試** | Locust                                 |",
-        "| **設定管理** | pydantic-settings                      |",
-        "| **日誌** | python-json-logger                     |",
-        "| **虛擬顯示** | Xvfb (X virtual framebuffer)           |",
-        "| **依賴項安全** | pip-audit                              |",
+        "| 類別                 | 技術                                     |",
+        "| ---------------------- | ---------------------------------------- |",
+        "| **後端框架** | FastAPI, Uvicorn                         |",
+        "| **資料庫** | PostgreSQL, SQLAlchemy (ORM), Alembic    |",
+        "| **背景任務 / 快取** | Dramatiq, Redis (Aiven)                  |",
+        "| **網頁爬蟲** | Playwright, BeautifulSoup4, Requests     |",
+        "| **容器化** | Docker, Docker Compose                   |",
+        "| **雲端平台** | Fly.io                                   |",
+        "| **依賴項管理** | Poetry                                   |",
+        "| **CI/CD 與程式碼品質** | GitHub Actions, pre-commit, Ruff         |",
+        "| **測試框架** | pytest, pytest-mock, pytest-playwright   |",
+        "| **負載測試** | Locust                                   |",
+        "| **設定管理** | pydantic-settings                        |",
+        "| **日誌** | python-json-logger                       |",
+        "| **虛擬顯示** | Xvfb (X virtual framebuffer)             |",
+        "| **依賴項安全** | pip-audit                                |",
         "",
         "## 本地開發環境設定 (Local Development Setup)",
         "",
@@ -212,7 +215,6 @@ def generate_readme_content():
         "",
         "在 `/docs` 頁面中，你可以直接在線上測試每一個 API 端點，並查看其請求與回應的詳細結構。",
         "",
-        # [新增] API 整合指南章節
         "## API 整合 (API Integration)",
         "",
         "若您需要將前端應用程式或任何外部客戶端與此後端服務對接，請參考我們詳細的「[API 整合指南](docs/api_integration_guide.md)」。",
@@ -353,7 +355,7 @@ def generate_readme_content():
     ]
 
     # 使用 dedent 來處理多行字串的縮排，並用 join 來合併成單一字串
-    readme_markdown = textwrap.dedent("\n".join(readme_markdown_lines))
+    readme_markdown = textwrap.dedent("\n".join(readme_markdown_lines)).strip()
 
     # 計算出專案根目錄的路徑
     project_root = Path(__file__).parent.parent
@@ -363,6 +365,7 @@ def generate_readme_content():
     try:
         with open(output_file_path, "w", encoding="utf-8") as f:
             f.write(readme_markdown)
+            f.write("\n")  # 確保檔案結尾有換行符
 
         # 在終端機回報成功訊息
         print(f"✅ README.md has been successfully updated at: {output_file_path}")
