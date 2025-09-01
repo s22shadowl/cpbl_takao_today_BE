@@ -25,10 +25,7 @@ jobs:
           echo "Starting web and worker machines..."
           fly machine start --app cpbl-takao-today-be --select process=web
           fly machine start --app cpbl-takao-today-be --select process=worker
-          echo "Waiting 60 seconds for machines to boot..."
-          sleep 60
 
-      # [新增] T23: 在觸發爬蟲前，增加健康檢查步驟
       - name: Wait for Web Service Health Check
         run: |
           timeout 180s bash -c ' \
@@ -83,9 +80,7 @@ jobs:
                 exit 0
               elif [ "$STATUS" == "failed" ]; then
                 echo "Task failed!"
-                # 如果希望任務失敗時也讓 workflow 失敗，可以取消下一行的註解
-                # exit 1
-                exit 0 # 目前設定為即使任務失敗，也繼續關機
+                exit 1
               fi
             fi
 
@@ -94,9 +89,7 @@ jobs:
           done
 
           echo "Timeout reached after ${TIMEOUT}s. Assuming task is stuck and proceeding to shutdown."
-          # 如果希望超時也讓 workflow 失敗，可以取消下一行的註解
-          # exit 1
-          exit 0
+          exit 1
 
       - name: Stop Machines (Always Run)
         # `if: always()` 確保無論前面步驟成功或失敗，此步驟都會執行，以節省成本。
