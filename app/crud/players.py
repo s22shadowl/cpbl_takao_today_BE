@@ -105,6 +105,39 @@ def store_player_season_stats_and_history(
         raise
 
 
+def store_player_fielding_stats(db: Session, fielding_stats_list: List[Dict[str, Any]]):
+    """
+    [T31-3 新增] 儲存最新的球員年度守備數據。
+
+    採用覆蓋式更新：先刪除既有紀錄，再新增本次抓取的紀錄。
+    """
+    if not fielding_stats_list:
+        return
+
+    logging.info(f"準備批次更新 {len(fielding_stats_list)} 筆球員的年度守備數據...")
+
+    # 取得所有本次要更新的球員姓名
+    player_names_to_update = {stats["player_name"] for stats in fielding_stats_list}
+
+    try:
+        # 1. 刪除這些球員的所有既有守備數據
+        db.query(models.PlayerFieldingStatsDB).filter(
+            models.PlayerFieldingStatsDB.player_name.in_(player_names_to_update)
+        ).delete(synchronize_session=False)
+
+        # 2. 準備並新增本次抓取到的新數據
+        new_stats_objects = [
+            models.PlayerFieldingStatsDB(**stats_data)
+            for stats_data in fielding_stats_list
+        ]
+        db.add_all(new_stats_objects)
+
+        logging.info(f"已準備 {len(new_stats_objects)} 筆球員守備數據待提交。")
+    except Exception as e:
+        logging.error(f"準備更新球員年度守備數據時出錯: {e}", exc_info=True)
+        raise
+
+
 def store_player_game_data(
     db: Session, game_id: int, all_players_data: List[Dict[str, Any]]
 ):

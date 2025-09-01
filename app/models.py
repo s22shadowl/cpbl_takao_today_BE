@@ -275,3 +275,34 @@ class PlayerCareerStatsDB(Base, PlayerCareerStatsMixin):
     player_name = Column(String, unique=True, nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# --- [T31-3 新增] 球員年度防守數據模型 ---
+class PlayerFieldingStatsDB(Base):
+    __tablename__ = "player_fielding_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    player_name = Column(String, nullable=False, index=True)
+    position = Column(String, nullable=False, index=True)
+    team_name = Column(String)
+
+    games_played = Column(Integer, default=0)
+    total_chances = Column(Integer, default=0)
+    putouts = Column(Integer, default=0)
+    assists = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+    double_plays = Column(Integer, default=0)
+    triple_plays = Column(Integer, default=0)
+    passed_balls = Column(Integer, default=0)
+    caught_stealing_catcher = Column(Integer, default=0)
+    stolen_bases_allowed_catcher = Column(Integer, default=0)
+    fielding_percentage = Column(REAL)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "player_name", "position", name="_player_position_fielding_uc"
+        ),
+    )

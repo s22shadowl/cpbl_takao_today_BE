@@ -5,6 +5,8 @@ import time
 import logging
 from typing import Dict, List, Optional
 
+from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
+
 from app.models import AtBatResultType
 from app.utils.parsing_helpers import is_formal_pa, map_result_short_to_type
 
@@ -22,12 +24,134 @@ from app.services.game_state_machine import GameStateMachine
 logger = logging.getLogger(__name__)
 
 
-# --- 主要爬蟲邏輯函式 ---
+# --- [T31-3 新增] 獨立的爬蟲邏輯函式 ---
+
+
+def _scrape_and_store_batting_stats(
+    page: Page, team_stats_url: str, update_career_stats_for_all: bool = False
+):
+    """抓取並儲存球季打擊數據，並觸發生涯數據更新。"""
+    logger.info("--- (1/2) 開始抓取球季累積打擊數據 ---")
+    try:
+        page.goto(team_stats_url, wait_until="networkidle")
+        page.wait_for_selector("div.RecordTable", timeout=15000)
+        html_content = page.content()
+    except PlaywrightTimeoutError:
+        logger.error("等待打擊數據表格時超時，無法抓取打擊數據。")
+        return
+
+    season_stats_list = season_stats.parse_season_batting_stats_page(html_content)
+    if not season_stats_list:
+        logger.info("未解析到任何球員的球季打擊數據。")
+        return
+
+    db = SessionLocal()
+    try:
+        from app.crud import players
+
+        players.store_player_season_stats_and_history(db, season_stats_list)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if db:
+            db.close()
+
+    logger.info("--- 球季累積打擊數據抓取完畢 ---")
+
+    # --- 後續的生涯數據更新邏輯 ---
+    players_to_update_career_stats = []
+    if update_career_stats_for_all:
+        logger.info("模式：更新所有球員的生涯數據。")
+        players_to_update_career_stats = season_stats_list
+    else:
+        logger.info(f"模式：僅更新目標球員 {settings.TARGET_PLAYER_NAMES} 的生涯數據。")
+        players_to_update_career_stats = [
+            p
+            for p in season_stats_list
+            if p["player_name"] in settings.TARGET_PLAYER_NAMES
+        ]
+
+    if not players_to_update_career_stats:
+        logger.info("沒有需要更新生涯數據的球員。")
+        return
+
+    logger.info(
+        f"--- 開始為 {len(players_to_update_career_stats)} 位球員觸發生涯數據更新 ---"
+    )
+    for player_stats in players_to_update_career_stats:
+        player_name = player_stats.get("player_name")
+        player_url = player_stats.get("player_url")
+        if player_name and player_url:
+            try:
+                # [修正] 傳遞已存在的 page 物件
+                player_service.scrape_and_store_player_career_stats(
+                    page=page, player_name=player_name, player_url=player_url
+                )
+                time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
+            except Exception as e:
+                logger.error(
+                    f"在為球員 [{player_name}] 更新生涯數據時失敗: {e}", exc_info=True
+                )
+    logger.info("--- 所有球員生涯數據更新流程已完成 ---")
+
+
+def _scrape_and_store_fielding_stats(
+    page: Page,
+    team_stats_url: str,
+):
+    """在同一個瀏覽器頁面中，接續抓取並儲存球季守備數據。"""
+    logger.info("--- (2/2) 開始抓取球季累積守備數據--- ")
+    try:
+        # 1. 選擇「守備成績」
+        page.goto(team_stats_url, wait_until="networkidle")
+        page.wait_for_selector("div.RecordTable", timeout=15000)
+        page.select_option("#Position", "03")
+        # 2. 點擊「查詢」按鈕
+        page.click('input[value="查詢"]')
+
+        # 3. [修正] 直接等待預期結果出現，而不是等待不穩定的載入動畫。
+        #    當守備數據表格載入後，其標頭 "刺殺" 必定會出現。
+        page.wait_for_selector('th:has-text("守備位置")', timeout=15000)
+
+        html_content = page.content()
+    except PlaywrightTimeoutError as e:
+        logger.error(
+            f"等待守備數據表格時超時或互動失敗，無法抓取守備數據。{e}", exc_info=True
+        )
+        return
+    except Exception as e:
+        logger.error(f"抓取守備數據時發生未預期的瀏覽器錯誤: {e}", exc_info=True)
+        return
+
+    fielding_stats_list = season_stats.parse_season_fielding_stats_page(html_content)
+    if not fielding_stats_list:
+        logger.info("未解析到任何球員的球季守備數據。")
+        return
+
+    db = SessionLocal()
+    try:
+        from app.crud import players
+
+        players.store_player_fielding_stats(db, fielding_stats_list)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        if db:
+            db.close()
+
+    logger.info("--- 球季累積守備數據抓取完畢 ---")
+
+
+# --- [T31-3 重構] 主要爬蟲協調函式 ---
 
 
 def scrape_and_store_season_stats(update_career_stats_for_all: bool = False):
     """
-    抓取並儲存目標球隊的球季累積數據，並觸發生涯數據的更新。
+    [協調函式] 抓取並儲存目標球隊的球季累積數據 (包含打擊與守備)。
 
     Args:
         update_career_stats_for_all (bool):
@@ -42,65 +166,23 @@ def scrape_and_store_season_stats(update_career_stats_for_all: bool = False):
         return
 
     team_stats_url = f"{settings.TEAM_SCORE_URL}?ClubNo={club_no}"
-    logger.info(f"--- 開始抓取球季累積數據，URL: {team_stats_url} ---")
+    logger.info(f"--- 開始抓取球季累積數據 (打擊與守備)，URL: {team_stats_url} ---")
 
-    html_content = fetcher.get_dynamic_page_content(
-        team_stats_url, wait_for_selector="div.RecordTable"
-    )
-    season_stats_list = season_stats.parse_season_stats_page(html_content)
-    if not season_stats_list:
-        logger.info("未解析到任何球員的球季數據。")
-        return
-
-    db = SessionLocal()
     try:
-        # [重構] 雖然此處也可移至 data_persistence，但因其邏輯單純且僅此一處使用，暫時保留
-        from app.crud import players
+        with get_page(headless=False) as page:
+            # 任務一：抓取打擊數據
+            _scrape_and_store_batting_stats(
+                page, team_stats_url, update_career_stats_for_all
+            )
 
-        players.store_player_season_stats_and_history(db, season_stats_list)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    finally:
-        if db:
-            db.close()
+            # 任務二：在同一個 page 中，接續抓取守備數據
+            _scrape_and_store_fielding_stats(page, team_stats_url)
 
-    logger.info("--- 球季累積數據抓取完畢 ---")
+    except Exception as e:
+        logger.error(f"執行球季數據抓取主流程時發生嚴重錯誤: {e}", exc_info=True)
+        # 確保在發生不可預期的錯誤時，也能記錄下來
 
-    players_to_update_career_stats = []
-    if update_career_stats_for_all:
-        logger.info("模式：更新所有球員的生涯數據。")
-        players_to_update_career_stats = season_stats_list
-    else:
-        logger.info(f"模式：僅更新目標球員 {settings.TARGET_PLAYER_NAMES} 的生涯數據。")
-        players_to_update_career_stats = [
-            p
-            for p in season_stats_list
-            if p["player_name"] in settings.TARGET_PLAYER_NAMES
-        ]
-
-    if not players_to_update_career_stats:
-        logger.info("沒有需要更新生涯數據的球員，任務結束。")
-        return
-
-    logger.info(
-        f"--- 開始為 {len(players_to_update_career_stats)} 位球員觸發生涯數據更新 ---"
-    )
-    for player_stats in players_to_update_career_stats:
-        player_name = player_stats.get("player_name")
-        player_url = player_stats.get("player_url")
-        if player_name and player_url:
-            try:
-                player_service.scrape_and_store_player_career_stats(
-                    player_name=player_name, player_url=player_url
-                )
-                time.sleep(settings.FRIENDLY_SCRAPING_DELAY)
-            except Exception as e:
-                logger.error(
-                    f"在為球員 [{player_name}] 更新生涯數據時失敗: {e}", exc_info=True
-                )
-    logger.info("--- 所有球員生涯數據更新流程已完成 ---")
+    logger.info("--- 球季數據 (打擊與守備) 完整抓取流程結束 ---")
 
 
 def _process_filtered_games(

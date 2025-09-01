@@ -165,6 +165,78 @@ def setup_ibb_impact_test_data(db_session: Session):
     return game
 
 
+@pytest.fixture(scope="function")
+def setup_position_analysis_data(db_session: Session):
+    """[新增] 建立用於測試 get_position_analysis_by_year 的資料"""
+    game1 = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2024_1",
+        game_date=datetime.date(2024, 4, 1),
+        home_team="中信兄弟",
+        away_team="味全龍",
+    )
+    game2 = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2024_2",
+        game_date=datetime.date(2024, 5, 10),
+        home_team="中信兄弟",
+        away_team="樂天桃猿",
+    )
+    game_other_year = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2025_1",
+        game_date=datetime.date(2025, 4, 1),
+        home_team="中信兄弟",
+        away_team="味全龍",
+    )
+    db_session.add_all([game1, game2, game_other_year])
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="工具人",
+                team_name="中信兄弟",
+                position="2B,SS",
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game2.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game_other_year.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="角落砲",
+                team_name="中信兄弟",
+                position="LF",
+            ),
+        ]
+    )
+
+    db_session.add_all(
+        [
+            models.PlayerSeasonStatsDB(player_name="游擊大師", at_bats=100, hits=30),
+            models.PlayerSeasonStatsDB(player_name="工具人", at_bats=50, hits=15),
+            models.PlayerFieldingStatsDB(
+                player_name="游擊大師", position="SS", errors=2
+            ),
+            models.PlayerFieldingStatsDB(player_name="工具人", position="2B", errors=1),
+        ]
+    )
+    db_session.commit()
+
+
 # --- CRUD 函式單元測試 ---
 
 
@@ -405,6 +477,45 @@ def test_find_at_bats_in_situation(db_session: Session):
         db_session, "情境男", models.RunnersSituation.SCORING_POSITION
     )
     assert len(results_sp) == 2
+
+
+def test_get_position_analysis_by_year(
+    db_session: Session, setup_position_analysis_data
+):
+    """[新增] 測試 get_position_analysis_by_year 的完整邏輯。"""
+    result = analysis.get_position_analysis_by_year(
+        db_session, year=2024, position="SS"
+    )
+
+    # 1. 驗證 calendar_data
+    calendar_data = result["calendar_data"]
+    assert len(calendar_data) == 2
+    dates = {c["date"] for c in calendar_data}
+    assert dates == {datetime.date(2024, 4, 1), datetime.date(2024, 5, 10)}
+
+    # 檢查 4/1 的比賽
+    day1_data = next(c for c in calendar_data if c["date"] == datetime.date(2024, 4, 1))
+    assert day1_data["starter_player_name"] == "游擊大師"
+    assert day1_data["substitute_player_names"] == ["工具人"]
+
+    # 2. 驗證 player_stats
+    player_stats = result["player_stats"]
+    assert len(player_stats) == 2
+    player_stats_map = {p["player_name"]: p for p in player_stats}
+
+    # 驗證「游擊大師」的數據
+    stats_master = player_stats_map["游擊大師"]
+    assert stats_master["batting_stats"] is not None
+    assert stats_master["batting_stats"].at_bats == 100
+    assert len(stats_master["fielding_stats"]) == 1
+    assert stats_master["fielding_stats"][0].errors == 2
+
+    # 驗證「工具人」的數據
+    stats_utility = player_stats_map["工具人"]
+    assert stats_utility["batting_stats"] is not None
+    assert stats_utility["batting_stats"].at_bats == 50
+    # 工具人的 SS 守備數據不存在，應為空列表
+    assert len(stats_utility["fielding_stats"]) == 0
 
 
 def test_find_next_at_bats_after_ibb(db_session: Session):

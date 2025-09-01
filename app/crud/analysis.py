@@ -6,8 +6,12 @@ from app import models, schemas
 from typing import List, Dict, Any, Optional
 
 from sqlalchemy.orm import Session, joinedload, aliased
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, extract
 from app.config import settings
+
+from itertools import groupby
+from operator import attrgetter
+import sqlalchemy as sa
 
 # --- 進階查詢函式 ---
 
@@ -151,20 +155,106 @@ def find_at_bats_in_situation(
     return at_bats
 
 
-def get_summaries_by_position(
-    db: Session, position: str, skip: int = 0, limit: int = 100
-) -> List[models.PlayerGameSummaryDB]:
-    """查詢指定守備位置的所有球員出賽紀錄。"""
+# [T31-4 修正] 擴充函式以整合打擊與守備數據
+def get_position_analysis_by_year(db: Session, year: int, position: str) -> Dict:
+    """
+    查詢指定年度與守備位置的深入分析數據。
+
+    Args:
+        db: 資料庫 session。
+        year: 查詢的年份。
+        position: 查詢的守備位置 (例如: '2B')。
+
+    Returns:
+        一個包含 calendar_data 和 player_stats 的字典。
+    """
+    # 1. 查詢該年度、該守備位置相關的所有出場紀錄
+    #    - position.like(f"%{position}%") 會同時抓取 '2B' 和 '(2B)'
+    #    - 預先載入 game relationship 以避免 N+1 查詢
     summaries = (
         db.query(models.PlayerGameSummaryDB)
-        .filter(models.PlayerGameSummaryDB.position == position)
         .join(models.GameResultDB)
-        .order_by(models.GameResultDB.game_date.desc())
-        .offset(skip)
-        .limit(limit)
+        .filter(extract("year", models.GameResultDB.game_date) == year)
+        .filter(models.PlayerGameSummaryDB.position.like(f"%{position}%"))
+        .options(sa.orm.joinedload(models.PlayerGameSummaryDB.game))
+        .order_by(models.GameResultDB.game_date.asc())
         .all()
     )
-    return summaries
+
+    calendar_data = []
+    # 2. 按 game_id 將紀錄分組
+    #    - 需要先對 summaries 排序才能正確分組
+    summaries.sort(key=attrgetter("game_id"))
+    for game_id, group in groupby(summaries, key=attrgetter("game_id")):
+        game_summaries = list(group)
+        starter_summary = None
+        substitute_player_names = []
+
+        # 3. 在每場比賽中找出先發與替補
+        for summary in game_summaries:
+            # 先發定義：守備位置完全相符，且尚未找到先發
+            if summary.position == position and not starter_summary:
+                starter_summary = summary
+            else:
+                substitute_player_names.append(summary.player_name)
+
+        # 4. 如果有找到先發球員，才建立日曆項目
+        if starter_summary:
+            # 從替補名單中移除先發球員自己
+            final_substitutes = [
+                name
+                for name in substitute_player_names
+                if name != starter_summary.player_name
+            ]
+            calendar_item = {
+                "date": starter_summary.game.game_date,
+                "starter_player_name": starter_summary.player_name,
+                "substitute_player_names": final_substitutes,
+                "starter_player_summary": starter_summary,
+            }
+            calendar_data.append(calendar_item)
+
+    # 5. 整合 player_stats (打擊與守備數據)
+    #    - 從已查詢的出場紀錄中，取得所有不重複的球員姓名
+    player_names = {summary.player_name for summary in summaries}
+
+    player_stats_combined = []
+    if player_names:
+        # 查詢所有相關球員的年度打擊數據
+        batting_stats_list = (
+            db.query(models.PlayerSeasonStatsDB)
+            .filter(models.PlayerSeasonStatsDB.player_name.in_(player_names))
+            .all()
+        )
+        batting_stats_map = {s.player_name: s for s in batting_stats_list}
+
+        # 查詢所有相關球員在「指定守備位置」的年度守備數據
+        # 由於爬蟲已統一格式，此處可直接查詢
+        fielding_stats_list = (
+            db.query(models.PlayerFieldingStatsDB)
+            .filter(models.PlayerFieldingStatsDB.player_name.in_(player_names))
+            .filter(models.PlayerFieldingStatsDB.position == position.upper())
+            .all()
+        )
+        fielding_stats_map = {s.player_name: s for s in fielding_stats_list}
+
+        # 組合打擊與守備數據
+        for name in sorted(list(player_names)):
+            batting_stats = batting_stats_map.get(name)
+            # 守備數據可能不存在，所以用 .get()
+            fielding_stats = fielding_stats_map.get(name)
+
+            # 將守備數據放入一個列表中，以符合 Pydantic schema 的 `List` 預期
+            fielding_stats_for_player = [fielding_stats] if fielding_stats else []
+
+            player_stat_item = {
+                "player_name": name,
+                "batting_stats": batting_stats,
+                "fielding_stats": fielding_stats_for_player,
+            }
+            player_stats_combined.append(player_stat_item)
+
+    return {"calendar_data": calendar_data, "player_stats": player_stats_combined}
 
 
 def find_next_at_bats_after_ibb(

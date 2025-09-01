@@ -1,7 +1,7 @@
 # app/api/analysis.py
 
 from app.crud import analysis
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Path
 from typing import List, Optional
 from enum import Enum
 
@@ -11,6 +11,7 @@ from app import models, schemas
 from app.db import get_db
 from app.cache import cache
 from app.exceptions import PlayerNotFoundException, InvalidInputException
+import datetime
 
 
 router = APIRouter(
@@ -95,18 +96,31 @@ def get_situational_at_bats(
     return results
 
 
-@router.get("/positions/{position}", response_model=List[schemas.PlayerGameSummary])
+@router.get(
+    "/positions/{year}/{position}",
+    response_model=schemas.PositionAnalysisResponse,
+    summary="[T31] 取得指定年度與守備位置的深入分析數據",
+)
 @cache()
 def get_position_records(
     request: Request,
-    position: str,
-    skip: int = Query(0, ge=0, description="要跳過的紀錄數量"),
-    limit: int = Query(100, ge=1, le=200, description="每頁回傳的最大紀錄數量"),
+    year: int = Path(
+        ..., ge=2000, le=datetime.date.today().year + 1, description="查詢的年份"
+    ),
+    position: str = Path(..., description="查詢的守備位置 (例如: 2B, SS)"),
     db: Session = Depends(get_db),
 ):
-    """查詢指定守備位置的所有球員出賽紀錄。"""
-    summaries = analysis.get_summaries_by_position(db, position, skip=skip, limit=limit)
-    return summaries
+    """
+    查詢指定年度與守備位置的深入分析數據，包含：
+
+    - **calendarData**: 該年度所有比賽日的先發球員與其當日表現。
+    - **playerStats**: 所有曾於該位置出賽的球員之賽季累積攻守數據。
+    """
+    # [T31-1] 呼叫新的 CRUD 函式
+    analysis_data = analysis.get_position_analysis_by_year(
+        db, year=year, position=position
+    )
+    return analysis_data
 
 
 @router.get(

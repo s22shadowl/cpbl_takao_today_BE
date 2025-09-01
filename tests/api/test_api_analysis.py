@@ -1,5 +1,3 @@
-# tests/api/test_api_analysis.py
-
 import pytest
 import datetime
 from fastapi.testclient import TestClient
@@ -172,6 +170,145 @@ def setup_ibb_impact_test_data(db_session: Session):
     return game
 
 
+@pytest.fixture(scope="function")
+def setup_situational_at_bats_data(db_session: Session):
+    """[新增] 建立用於測試情境打席的資料"""
+    game = models.GameResultDB(
+        cpbl_game_id="SITUATION_TEST_GAME",
+        game_date=datetime.date(2025, 8, 17),
+        home_team="富邦悍將",
+        away_team="統一7-ELEVEn獅",
+    )
+    db_session.add(game)
+    db_session.flush()
+
+    summary = models.PlayerGameSummaryDB(
+        game_id=game.id, player_name="情境打者", team_name="富邦悍將"
+    )
+    db_session.add(summary)
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            models.AtBatDetailDB(
+                player_game_summary_id=summary.id,
+                game_id=game.id,
+                inning=1,
+                runners_on_base_before="一壘、三壘有人",
+                result_short="一安",  # 符合
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summary.id,
+                game_id=game.id,
+                inning=3,
+                runners_on_base_before="壘上無人",
+                result_short="三振",  # 不符合
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summary.id,
+                game_id=game.id,
+                inning=5,
+                runners_on_base_before="一壘、三壘有人",
+                result_short="高犧",  # 符合
+            ),
+            models.AtBatDetailDB(
+                player_game_summary_id=summary.id,
+                game_id=game.id,
+                inning=7,
+                runners_on_base_before="二壘有人",
+                result_short="滾地",  # 符合 (得點圈)
+            ),
+        ]
+    )
+    db_session.commit()
+
+
+@pytest.fixture(scope="function")
+def setup_position_analysis_data(db_session: Session):
+    """[新增] 建立用於測試年度守備位置分析的資料"""
+    game1 = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2024_1",
+        game_date=datetime.date(2024, 4, 1),
+        home_team="中信兄弟",
+        away_team="味全龍",
+    )
+    game2 = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2024_2",
+        game_date=datetime.date(2024, 5, 10),
+        home_team="中信兄弟",
+        away_team="樂天桃猿",
+    )
+    game_other_year = models.GameResultDB(
+        cpbl_game_id="POS_TEST_2025_1",
+        game_date=datetime.date(2025, 4, 1),
+        home_team="中信兄弟",
+        away_team="味全龍",
+    )
+    db_session.add_all([game1, game2, game_other_year])
+    db_session.flush()
+
+    db_session.add_all(
+        [
+            # 2024 年 SS 的相關紀錄
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+                at_bats=4,
+                hits=2,
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="工具人",
+                team_name="中信兄弟",
+                position="2B,SS",
+                at_bats=3,
+                hits=1,
+            ),
+            models.PlayerGameSummaryDB(
+                game_id=game2.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+                at_bats=5,
+                hits=1,
+            ),
+            # 應被忽略的紀錄 (不同年份)
+            models.PlayerGameSummaryDB(
+                game_id=game_other_year.id,
+                player_name="游擊大師",
+                team_name="中信兄弟",
+                position="SS",
+                at_bats=3,
+                hits=3,
+            ),
+            # 應被忽略的紀錄 (不同位置)
+            models.PlayerGameSummaryDB(
+                game_id=game1.id,
+                player_name="角落砲",
+                team_name="中信兄弟",
+                position="LF",
+                at_bats=4,
+                hits=1,
+            ),
+        ]
+    )
+
+    # [修正] 新增球員年度數據，以供 API 查詢
+    db_session.add_all(
+        [
+            models.PlayerSeasonStatsDB(
+                player_name="游擊大師", at_bats=9, hits=3, avg=(3 / 9)
+            ),
+            models.PlayerSeasonStatsDB(
+                player_name="工具人", at_bats=3, hits=1, avg=(1 / 3)
+            ),
+        ]
+    )
+    db_session.commit()
+
+
 # --- 進階分析端點測試 ---
 
 
@@ -277,3 +414,55 @@ def test_get_ibb_impact_analysis_includes_opponent_team(
     data = response.json()
     assert len(data) > 0
     assert data[0]["opponent_team"] == "中信兄弟"
+
+
+def test_get_situational_at_bats(client: TestClient, setup_situational_at_bats_data):
+    """[新增] 測試 /situational-at-bats 端點能根據壘上情境正確篩選並回傳擴充資訊。"""
+    # [修正] 使用有效的 Enum 值 "scoring_position"
+    response = client.get(
+        "/api/analysis/players/情境打者/situational-at-bats?situation=scoring_position"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # [修正] 驗證所有符合 "scoring_position" 的打席都被回傳 (B1,B3 and B2)
+    assert len(data) == 3
+    results_short = {d["result_short"] for d in data}
+    assert results_short == {"一安", "高犧", "滾地"}
+
+    # 驗證回應已正確擴充比賽資訊
+    assert data[0]["game_date"] == "2025-08-17"
+    assert data[0]["opponent_team"] == "統一7-ELEVEn獅"
+
+
+def test_get_position_records(client: TestClient, setup_position_analysis_data):
+    """[新增] 測試 /positions/{year}/{position} 端點能回傳正確的年度守位分析。"""
+    response = client.get("/api/analysis/positions/2024/SS")
+    assert response.status_code == 200
+    data = response.json()
+
+    # 驗證基本結構
+    assert "calendar_data" in data
+    assert "player_stats" in data
+
+    # 驗證 calendarData
+    assert len(data["calendar_data"]) == 2  # 2024 年有兩天比賽有 SS
+    dates = {c["date"] for c in data["calendar_data"]}
+    assert dates == {"2024-04-01", "2024-05-10"}
+
+    # 驗證 playerStats (球員賽季數據彙總)
+    assert len(data["player_stats"]) == 2  # 游擊大師、工具人
+    player_stats_map = {p["player_name"]: p for p in data["player_stats"]}
+    assert "游擊大師" in player_stats_map
+    assert "工具人" in player_stats_map
+
+    # [修正] 從 "batting_stats" 子物件中取得數據
+    stats_master = player_stats_map["游擊大師"]["batting_stats"]
+    assert stats_master["at_bats"] == 9
+    assert stats_master["hits"] == 3
+    assert stats_master["avg"] == pytest.approx(3 / 9)
+
+    # [修正] 從 "batting_stats" 子物件中取得數據
+    stats_utility = player_stats_map["工具人"]["batting_stats"]
+    assert stats_utility["at_bats"] == 3
+    assert stats_utility["hits"] == 1

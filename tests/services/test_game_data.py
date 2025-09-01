@@ -1,6 +1,6 @@
 # tests/services/test_game_data.py
 
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 import pytest
 import datetime
 
@@ -14,6 +14,10 @@ MOCK_PARSED_PLAYERS = [
     {"player_name": "王柏融", "player_url": "http://example.com/wang"},
     {"player_name": "魔鷹", "player_url": "http://example.com/moya"},
     {"player_name": "吳念庭", "player_url": "http://example.com/wu"},
+]
+MOCK_FIELDING_STATS = [
+    {"player_name": "王柏融", "position": "LF", "errors": 1},
+    {"player_name": "吳念庭", "position": "3B", "errors": 5},
 ]
 
 # --- Fixtures ---
@@ -53,10 +57,7 @@ def mock_high_level_dependencies(monkeypatch):
     """為高層級的協調函式 (如 scrape_entire_year) 模擬依賴。"""
     mock_fetcher = patch("app.services.game_data.fetcher").start()
     mock_schedule_parser = patch("app.services.game_data.schedule").start()
-    mock_season_stats_parser = patch("app.services.game_data.season_stats").start()
-    # [修正] 將 mock 路徑指向 app.services.game_data 內部使用的 crud 模組
     patch("app.services.game_data.data_persistence.players").start()
-    mock_player_service = patch("app.services.game_data.player_service").start()
     mock_session = patch("app.services.game_data.SessionLocal").start()
     mock_logger = patch("app.services.game_data.logger").start()
     mock_time = patch("app.services.game_data.time").start()
@@ -67,8 +68,6 @@ def mock_high_level_dependencies(monkeypatch):
     mocks = {
         "fetcher": mock_fetcher,
         "schedule_parser": mock_schedule_parser,
-        "season_stats_parser": mock_season_stats_parser,
-        "player_service": mock_player_service,
         "session": mock_session,
         "logger": mock_logger,
         "time": mock_time,
@@ -78,46 +77,110 @@ def mock_high_level_dependencies(monkeypatch):
     patch.stopall()
 
 
-# --- 測試 scrape_and_store_season_stats ---
+# --- [T31-3 新增] 測試重構後的爬蟲邏輯 ---
 
 
-def test_scrape_and_store_season_stats_default_behavior(
-    mock_high_level_dependencies, monkeypatch
-):
-    """測試 scrape_and_store_season_stats 在預設模式下只更新目標球員。"""
+def test_scrape_and_store_season_stats_orchestration(mocker):
+    """測試主協調函式 scrape_and_store_season_stats 是否正確呼叫其子函式。"""
+    # 1. Arrange
+    mock_get_page = mocker.patch("app.services.game_data.get_page")
+    mock_page = MagicMock()
+    mock_get_page.return_value.__enter__.return_value = mock_page
+
+    mock_scrape_batting = mocker.patch(
+        "app.services.game_data._scrape_and_store_batting_stats"
+    )
+    mock_scrape_fielding = mocker.patch(
+        "app.services.game_data._scrape_and_store_fielding_stats"
+    )
+
+    # 2. Act
+    game_data.scrape_and_store_season_stats(update_career_stats_for_all=True)
+
+    # 3. Assert
+    # 驗證 get_page 被呼叫
+    mock_get_page.assert_called_once_with(headless=False)
+
+    # 驗證打擊數據抓取函式被呼叫，並傳遞了正確的參數
+    mock_scrape_batting.assert_called_once()
+    assert mock_scrape_batting.call_args[0][0] is mock_page
+    assert "ClubNo=" in mock_scrape_batting.call_args[0][1]
+    assert mock_scrape_batting.call_args[0][2] is True  # update_career_stats_for_all
+
+    # 驗證守備數據抓取函式被呼叫，並傳遞了正確的參數
+    mock_scrape_fielding.assert_called_once()
+    assert mock_scrape_fielding.call_args[0][0] is mock_page
+    assert "ClubNo=" in mock_scrape_fielding.call_args[0][1]
+
+
+def test__scrape_and_store_batting_stats_default(mocker, monkeypatch):
+    """測試 _scrape_and_store_batting_stats 在預設模式下只更新目標球員。"""
+    # 1. Arrange
     monkeypatch.setattr("app.config.settings.TARGET_PLAYER_NAMES", ["王柏融", "魔鷹"])
-    mock_parser = mock_high_level_dependencies["season_stats_parser"]
-    mock_parser.parse_season_stats_page.return_value = MOCK_PARSED_PLAYERS
-    mock_player_service = mock_high_level_dependencies["player_service"]
+    mock_page = MagicMock()
+    mock_page.content.return_value = "<html>batting page</html>"
 
-    # [修正] 由於 crud.players 已被 mock，這裡需要 mock 其底下的函式
-    with patch("app.crud.players.store_player_season_stats_and_history"):
-        game_data.scrape_and_store_season_stats()
+    mocker.patch(
+        "app.services.game_data.season_stats.parse_season_batting_stats_page",
+        return_value=MOCK_PARSED_PLAYERS,
+    )
+    mock_store_stats = mocker.patch(
+        "app.crud.players.store_player_season_stats_and_history"
+    )
+    mock_player_service = mocker.patch("app.services.game_data.player_service")
+    mocker.patch("app.services.game_data.SessionLocal")
 
+    # 2. Act
+    game_data._scrape_and_store_batting_stats(
+        mock_page, "http://fake.url/batting", update_career_stats_for_all=False
+    )
+
+    # 3. Assert
+    mock_page.goto.assert_called_once_with(
+        "http://fake.url/batting", wait_until="networkidle"
+    )
+    mock_store_stats.assert_called_once()
+
+    # 驗證只有目標球員的生涯數據被更新
     assert mock_player_service.scrape_and_store_player_career_stats.call_count == 2
     mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
-        player_name="王柏融", player_url="http://example.com/wang"
+        page=mock_page, player_name="王柏融", player_url="http://example.com/wang"
     )
     mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
-        player_name="魔鷹", player_url="http://example.com/moya"
+        page=mock_page, player_name="魔鷹", player_url="http://example.com/moya"
     )
 
 
-def test_scrape_and_store_season_stats_update_all(mock_high_level_dependencies):
-    """測試 scrape_and_store_season_stats 在 update_career_stats_for_all=True 時更新所有球員。"""
-    mock_parser = mock_high_level_dependencies["season_stats_parser"]
-    mock_parser.parse_season_stats_page.return_value = MOCK_PARSED_PLAYERS
-    mock_player_service = mock_high_level_dependencies["player_service"]
+def test__scrape_and_store_fielding_stats_success(mocker):
+    """測試 _scrape_and_store_fielding_stats 成功抓取、解析並儲存的流程。"""
+    # 1. Arrange
+    mock_page = MagicMock()
+    mock_page.content.return_value = "<html>fielding page</html>"
 
-    with patch("app.crud.players.store_player_season_stats_and_history"):
-        game_data.scrape_and_store_season_stats(update_career_stats_for_all=True)
+    mock_parser = mocker.patch(
+        "app.services.game_data.season_stats.parse_season_fielding_stats_page",
+        return_value=MOCK_FIELDING_STATS,
+    )
+    mock_store_stats = mocker.patch("app.crud.players.store_player_fielding_stats")
+    mocker.patch("app.services.game_data.SessionLocal")
 
-    assert mock_player_service.scrape_and_store_player_career_stats.call_count == len(
-        MOCK_PARSED_PLAYERS
+    # 2. Act
+    game_data._scrape_and_store_fielding_stats(mock_page, "http://fake.url/fielding")
+
+    # 3. Assert
+    # 驗證瀏覽器互動
+    mock_page.goto.assert_called_once_with(
+        "http://fake.url/fielding", wait_until="networkidle"
     )
-    mock_player_service.scrape_and_store_player_career_stats.assert_any_call(
-        player_name="吳念庭", player_url="http://example.com/wu"
+    mock_page.select_option.assert_called_once_with("#Position", "03")
+    mock_page.click.assert_called_once_with('input[value="查詢"]')
+    mock_page.wait_for_selector.assert_any_call(
+        'th:has-text("守備位置")', timeout=15000
     )
+
+    # 驗證解析與儲存
+    mock_parser.assert_called_once_with("<html>fielding page</html>")
+    mock_store_stats.assert_called_once_with(mocker.ANY, MOCK_FIELDING_STATS)
 
 
 # --- 測試 _process_filtered_games (重構後) ---

@@ -122,6 +122,65 @@ def test_store_player_season_stats_and_history(db_session):
     assert history_records_updated[2].avg == 0.305
 
 
+def test_store_player_fielding_stats(db_session):
+    """[新增] 測試 store_player_fielding_stats 的覆蓋式更新邏輯。"""
+    db = db_session
+
+    # 1. 準備初始資料
+    db.add_all(
+        [
+            models.PlayerFieldingStatsDB(
+                player_name="守備員A", position="SS", errors=5
+            ),
+            models.PlayerFieldingStatsDB(
+                player_name="守備員B", position="2B", errors=3
+            ),
+        ]
+    )
+    db.commit()
+    assert db.query(models.PlayerFieldingStatsDB).count() == 2
+
+    # 2. 準備新的數據列表
+    # - 更新守備員A
+    # - 這次的列表中沒有守備員B
+    # - 新增守備員C
+    new_stats_list = [
+        {"player_name": "守備員A", "position": "SS", "errors": 2, "putouts": 100},
+        {"player_name": "守備員C", "position": "OF", "errors": 1, "assists": 10},
+    ]
+
+    # 3. 執行函式
+    players.store_player_fielding_stats(db, new_stats_list)
+    db.commit()
+
+    # 4. 驗證結果
+    # 總筆數應為 3 (B被保留, A被更新, C被新增)
+    assert db.query(models.PlayerFieldingStatsDB).count() == 3
+
+    # 驗證守備員A的資料已被更新
+    player_a = (
+        db.query(models.PlayerFieldingStatsDB).filter_by(player_name="守備員A").first()
+    )
+    assert player_a is not None
+    assert player_a.errors == 2
+    assert player_a.putouts == 100
+
+    # 驗證守備員B的資料被保留且未變
+    player_b = (
+        db.query(models.PlayerFieldingStatsDB).filter_by(player_name="守備員B").first()
+    )
+    assert player_b is not None
+    assert player_b.errors == 3
+
+    # 驗證守備員C的資料已被新增
+    player_c = (
+        db.query(models.PlayerFieldingStatsDB).filter_by(player_name="守備員C").first()
+    )
+    assert player_c is not None
+    assert player_c.position == "OF"
+    assert player_c.assists == 10
+
+
 def test_store_player_game_data_with_details(db_session):
     """測試 store_player_game_data 函式，包含詳細打席資訊"""
     db = db_session

@@ -291,3 +291,50 @@ class DashboardNoGamesResponse(BaseModel):
 
 
 DashboardResponse = Union[DashboardHasGamesResponse, DashboardNoGamesResponse]
+
+
+# ==============================================================================
+# [T31-1] Positions API Schemas
+# ==============================================================================
+
+
+class CalendarDataItem(BaseModel):
+    date: datetime.date
+    starter_player_name: str
+    substitute_player_names: List[str] = []
+    starter_player_summary: PlayerGameSummary
+
+
+# [T31-4 新增] 球員年度守備數據模型
+class PlayerFieldingStats(BaseModel):
+    id: int
+    player_name: str
+    team_name: Optional[str] = None
+    position: Optional[str] = None
+    games_played: int
+    total_chances: int
+    putouts: int
+    assists: int
+    errors: int
+    double_plays: int
+    triple_plays: int
+    passed_balls: int
+    caught_stealing_catcher: int
+    stolen_bases_allowed_catcher: int
+    fielding_percentage: Optional[float] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+# [T31-4 修正] 修正 PlayerStatsForPositionAnalysis 模型以包含所有必要欄位
+class PlayerStatsForPositionAnalysis(BaseModel):
+    player_name: str  # [修正] 新增 player_name 欄位
+    batting_stats: Optional[PlayerSeasonStats] = None
+    fielding_stats: List[PlayerFieldingStats] = []
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PositionAnalysisResponse(BaseModel):
+    calendar_data: List[CalendarDataItem]
+    player_stats: List[PlayerStatsForPositionAnalysis]
