@@ -38,18 +38,19 @@ def to_boolean(value: any) -> bool:
     return bool(value)
 
 
-# [修改] 依賴項函式現在呼叫上面的工具函式，保持自身簡潔
 def process_completed_only_param(
-    # [核心修正] 將型別提示從 Any 改為 str，以明確告知 FastAPI 期望接收原始字串，
-    # 從而繞過其內建的布林驗證，讓我們的 to_boolean 邏輯可以處理任意字串。
-    completed_only: str = Query(
-        default=False,
+    # [核心修正] 將型別改為 Optional[str] 並將預設值設為 None。
+    completed_only: Optional[str] = Query(
+        default=None,
         description="是否只回傳已完成的比賽。接受 true/false, 1/0, t/f 等常見布林值表示法。",
     ),
 ) -> bool:
     """
     FastAPI 依賴項，呼叫 to_boolean 工具函式來處理查詢參數。
     """
+    # [核心修正] 處理參數未提供的情況 (None)，將其視為 False。
+    if completed_only is None:
+        return False
     return to_boolean(completed_only)
 
 

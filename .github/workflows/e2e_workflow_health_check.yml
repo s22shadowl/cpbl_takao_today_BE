@@ -15,21 +15,28 @@ jobs:
   run-e2e-workflow-test:
     name: 執行 GHA 工作流 E2E 測試
     runs-on: ubuntu-latest
-    # 確保部署成功後才執行
-    # needs: deploy
     steps:
-      - name: 安裝 flyctl
+      - name: 安裝 flyctl 與 jq
         run: |
           curl -L https://fly.io/install.sh | sh
           echo "/home/runner/.fly/bin" >> $GITHUB_PATH
+          sudo apt-get update && sudo apt-get install -y jq
 
-      - name: 步驟 1：啟動生產環境機器 (Web & Worker)
+      - name: 步驟 1：擴展並啟動生產環境機器 (Web & Worker)
+        # [修改]
+        # 原本的 `fly machine list | jq` 流程過於脆弱，
+        # 因為 API 對 'stopped' 狀態的機器回傳的 JSON 結構可能不同，導致 jq 解析失敗。
+        # 改為使用宣告式的 `fly scale count`，它不關心當前狀態，
+        # 而是直接命令平台達成「有 N 台機器在運行」的最終目標，這更為強健。
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          echo "正在啟動 web 與 worker 機器..."
-          fly machine start --app cpbl-takao-today-be --select process=web
-          fly machine start --app cpbl-takao-today-be --select process=worker
+          APP_NAME="cpbl-takao-today-be"
+          echo "正在確保 web process group 至少有一台機器運行..."
+          fly scale count web=1 --app $APP_NAME --yes
+          echo "正在確保 worker process group 至少有一台機器運行..."
+          fly scale count worker=1 --app $APP_NAME --yes
+          echo "Web 與 Worker 機器已啟動。"
 
       - name: 步驟 2： 等待 Web 服務健康檢查
         run: |
@@ -46,7 +53,7 @@ jobs:
         id: trigger
         run: |
           API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-e2e-test-task"
-          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.API_KEY }}" $API_URL)
+          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $API_URL)
           TASK_ID=$(echo $RESPONSE_JSON | jq -r .task_id)
           echo "E2E 測試任務已觸發，Task ID: $TASK_ID"
           echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
@@ -63,7 +70,7 @@ jobs:
           echo "正在監控 Task ID: $TASK_ID..."
 
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.API_KEY }}" $STATUS_URL)
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $STATUS_URL)
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
             BODY=$(echo "$RESPONSE" | sed '$d')
 
@@ -89,11 +96,17 @@ jobs:
           echo "❌ E2E 測試失敗！在 ${TIMEOUT} 秒後超時。"
           exit 1
 
-      - name: 步驟 6： 關閉機器 (無論成功或失敗都執行)
+      - name: 步驟 6： 將機器縮減至零 (無論成功或失敗都執行)
+        # [修改]
+        # 同樣使用 `fly scale count 0` 來將機器數量縮減至零，
+        # 讓應用程式回到 scale-to-zero 的閒置狀態。
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          echo "正在關閉 web 與 worker 機器..."
-          fly machine stop --app cpbl-takao-today-be --select process=web
-          fly machine stop --app cpbl-takao-today-be --select process=worker
+          APP_NAME="cpbl-takao-today-be"
+          echo "正在將 web 機器數量縮減至 0..."
+          fly scale count web=0 --app $APP_NAME --yes
+          echo "正在將 worker 機器數量縮減至 0..."
+          fly scale count worker=0 --app $APP_NAME --yes
+          echo "機器已設定為 scale-to-zero 狀態。"

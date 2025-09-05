@@ -11,6 +11,16 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    # [優化] 將共通環境變數提升至 job 層級，減少重複
+    env:
+      DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
+      DRAMATIQ_BROKER_URL: redis://localhost:6379/0
+      REDIS_CACHE_URL: redis://localhost:6379/1
+      API_KEY: test-ci-key
+      TARGET_TEAM_NAME: "台鋼雄鷹"
+      TARGET_TEAMS: '["台鋼雄鷹"]'
+      TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
+      ALLOWED_ORIGINS: '["*"]'
 
     services:
       postgres:
@@ -41,81 +51,88 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.2
+
+      - name: Verify Poetry version
+        run: poetry --version
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "poetry"
 
-      - name: Install system dependencies for Playwright
-        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y xvfb redis-tools
 
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install ruff pytest requests pip-audit
+      - name: Install dependencies
+        run: poetry install --no-root
 
       - name: Install Playwright Browsers
         run: |
-          playwright install chromium --with-deps
+          poetry run playwright install chromium --with-deps
 
       - name: Scan for vulnerabilities
         run: |
-          pip-audit -r requirements.txt
+          poetry export -f requirements.txt --output requirements.txt --without-hashes
+          poetry run pip-audit -r requirements.txt
 
       - name: Lint and Format Check
         run: |
-          ruff check .
+          poetry run ruff check .
 
       - name: Run Unit and Integration Tests
-        env:
-          DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
-          DRAMATIQ_BROKER_URL: redis://localhost:6379/0
-          REDIS_CACHE_URL: redis://localhost:6379/1
-          API_KEY: test-ci-key
-          TARGET_TEAM_NAME: "台鋼雄鷹"
-          TARGET_TEAMS: '["台鋼雄鷹"]'
-          TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
-          ALLOWED_ORIGINS: '["*"]'
         run: |
-          pytest -m "not e2e and not canary"
+          poetry run pytest -m "not e2e and not canary"
 
       - name: Run E2E Tests
         env:
-          DATABASE_URL: postgresql://myuser:mypassword@localhost:5432/mydb
-          DRAMATIQ_BROKER_URL: redis://localhost:6379/0
-          REDIS_CACHE_URL: redis://localhost:6379/1
-          API_KEY: test-ci-key
           PORT: 8000
           E2E_TEST_MODE: "true"
-          TARGET_TEAM_NAME: "台鋼雄鷹"
-          TARGET_TEAMS: '["台鋼雄鷹"]'
-          TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
-          ALLOWED_ORIGINS: '["*"]'
         run: |
           echo "Starting Web server..."
-          uvicorn app.main:app --host 0.0.0.0 --port $PORT > web.log 2>&1 &
-          python - <<'EOF'
-          import os, time, requests
-          port = os.getenv("PORT", "8000")
-          url = f"http://localhost:{port}/docs"
-          for i in range(20):
-              try:
-                  if requests.get(url).status_code == 200:
-                      print("Web Server is up!")
-                      exit(0)
-              except requests.ConnectionError: pass
-              print(f"Waiting for Web server... ({i+1}/20)")
-              time.sleep(1)
-          print("Web Server did not start in time."); exit(1)
-          EOF
+          poetry run uvicorn app.main:app --host 0.0.0.0 --port $PORT > web.log 2>&1 &
+
+          echo "Waiting for Web server to be ready..."
+          for i in {1..20}; do
+            if curl -sf -o /dev/null http://localhost:$PORT/docs; then
+              echo "Web Server is up!"
+              SERVER_IS_UP=true
+              break
+            fi
+            echo "Waiting for Web server... ($i/20)"
+            sleep 1
+          done
+
+          if [ -z "$SERVER_IS_UP" ]; then
+            echo "Web Server did not start in time."
+            exit 1
+          fi
 
           echo "Starting Worker service with xvfb..."
-          xvfb-run dramatiq app.workers:redis_broker app.workers --processes 2 > worker.log 2>&1 &
-          sleep 5
-          echo "Worker service started."
+          poetry run xvfb-run dramatiq app.workers:redis_broker app.workers --processes 2 > worker.log 2>&1 &
 
-          pytest tests/e2e
+          # [修正] 使用 redis-cli 輪詢來取代 sleep，確保 worker 已就緒
+          echo "Waiting for Worker service to be ready..."
+          for i in {1..20}; do
+            if redis-cli -h localhost -p 6379 GET worker_ready | grep -q "1"; then
+              echo "Worker service is up!"
+              WORKER_IS_UP=true
+              break
+            fi
+            echo "Waiting for Worker service... ($i/20)"
+            sleep 1
+          done
+
+          if [ -z "$WORKER_IS_UP" ]; then
+            echo "Worker service did not start in time."
+            exit 1
+          fi
+
+          poetry run pytest tests/e2e
 
       - name: Display logs on failure
         if: failure()
@@ -128,8 +145,8 @@ jobs:
   deploy:
     name: Deploy to Fly.io
     runs-on: ubuntu-latest
-    needs: build-and-test # 確保在 build-and-test 成功後才執行
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' # 僅在推送至 main 分支時執行
+    needs: build-and-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout repository
@@ -146,12 +163,10 @@ jobs:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
           SECRETS_JSON: ${{ toJSON(secrets) }}
         run: |
-          # 使用 jq 工具解析 JSON，篩選出所有以 'PROD_' 開頭的 secrets
           SECRETS_TO_SET=$(echo "$SECRETS_JSON" | jq -r 'to_entries[] | select(.key | startswith("PROD_")) | "\(.key | ltrimstr("PROD_"))=\(.value)"')
 
           if [[ -n "$SECRETS_TO_SET" ]]; then
             echo "Staging secrets on Fly.io..."
-            # 【修改】加入 --stage 旗標，讓 secrets 在下次部署時才生效，避免立即重啟
             echo "$SECRETS_TO_SET" | xargs flyctl secrets set --stage --app cpbl-takao-today-be
           else
             echo "No secrets with PROD_ prefix found to set."

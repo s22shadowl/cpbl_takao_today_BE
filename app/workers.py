@@ -11,6 +11,7 @@ import requests
 from datetime import datetime
 import pytz
 import time
+import redis
 
 from app.db import SessionLocal
 from app.crud import games as crud_games
@@ -40,6 +41,21 @@ result_backend = RedisBackend(url=broker_url, **broker_options)
 redis_broker = RedisBroker(url=broker_url, **broker_options)
 redis_broker.add_middleware(Results(backend=result_backend))
 dramatiq.set_broker(redis_broker)
+
+# --- CI/CD 信號 ---
+# [新增] 在 Dramatiq worker 啟動時，此模組會被載入，這段程式碼會被執行。
+# 僅在 CI/CD 環境中設定 Redis 信號，以通知測試流程 worker 已準備就緒。
+if settings.E2E_TEST_MODE:
+    try:
+        # 直接使用 CI 環境中固定的 Redis 位址
+        logger.info("CI/CD 模式: 正在設定 worker ready 信號至 Redis...")
+        redis_client = redis.Redis(host="localhost", port=6379, db=0)
+        redis_client.set("worker_ready", "1")
+        logger.info("CI/CD 模式: Worker ready 信號已成功設定。")
+    except Exception as e:
+        logger.error(
+            f"CI/CD 模式: 設定 worker ready 信號時發生錯誤: {e}", exc_info=True
+        )
 
 
 # --- 輔助函式 ---
@@ -229,7 +245,7 @@ def task_scrape_entire_year(year_str: Optional[str] = None):
 @dramatiq.actor(max_retries=0, time_limit=60 * 1000)  # 1 分鐘超時
 def task_e2e_workflow_test():
     """
-    [僅供 T11 E2E 測試使用]
+    [僅供 E2E 測試使用]
     一個輕量級的測試任務，僅等待數秒後就成功返回。
     """
     logger.info("背景任務: E2E 測試任務已啟動，將等待 5 秒...")

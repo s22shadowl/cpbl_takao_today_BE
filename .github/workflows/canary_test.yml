@@ -21,18 +21,22 @@ jobs:
       - name: 簽出程式碼 (Checkout Code)
         uses: actions/checkout@v4
 
+      - name: 安裝 Poetry
+        uses: snok/install-poetry@v1
+
       - name: 設定 Python 3.12 環境
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          # 使用快取來加速依賴項安裝
-          cache: "pip"
+          cache: "poetry"
 
       - name: 安裝專案依賴項
-        run: pip install -r requirements.txt
+        # [修正] 新增 --no-root 旗標，僅安裝相依套件
+        run: poetry install --no-root
 
       - name: 安裝 Playwright 瀏覽器及其系統依賴
-        run: playwright install chromium --with-deps
+        run: |
+          poetry run playwright install chromium --with-deps
 
       - name: 執行 Pytest (僅限 canary 標記)
         env:
@@ -43,4 +47,5 @@ jobs:
           TARGET_TEAM_NAME: "台鋼雄鷹"
           TARGET_TEAMS: '["台鋼雄鷹"]'
           TARGET_PLAYER_NAMES: '["王柏融","魔鷹","吳念庭"]'
-        run: pytest -m canary
+        run: |
+          poetry run pytest -m canary
