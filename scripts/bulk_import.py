@@ -5,6 +5,7 @@
 
 # 步驟一：爬取「比賽」資料至「暫存資料庫」
 # 此步驟會將指定日期範圍的歷史比賽數據，爬取並儲存到 Docker 環境中的暫存資料庫。
+# 最後，它會觸發一次官網賽程的更新。
 # 指令：
 # docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape --start YYYY-MM-DD --end YYYY-MM-DD"
 # 範例：
@@ -16,6 +17,12 @@
 # 此步驟會爬取球隊名單上所有球員的生涯數據，並存入暫存資料庫。通常在 scrape 後執行，或用於手動更新所有球員的生涯數據。
 # 指令：
 # docker compose run --rm worker sh -c "Xvfb :99 -screen 0 1280x1024x24 & export DISPLAY=:99 && python -m scripts.bulk_import scrape-career"
+
+# (可選) 步驟 B：僅更新官網賽程
+# 如果你只需要從官網同步最新的賽程資料，可以執行此指令。
+# 指令：
+# docker compose run --rm worker sh -c "python -m scripts.bulk_import update-schedule"
+
 
 # --- 最終流程 ---
 
@@ -34,6 +41,7 @@ import time
 import argparse
 from datetime import date
 from dateutil.relativedelta import relativedelta
+import dramatiq
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -51,13 +59,19 @@ from app.models import (
     PlayerSeasonStatsDB,
     PlayerSeasonStatsHistoryDB,
     PlayerCareerStatsDB,
+    PlayerFieldingStatsDB,
 )
 from app.logging_config import setup_logging
+from app.workers import task_update_schedule_and_reschedule, redis_broker
 
 
 # --- 初始化 ---
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# --- Dramatiq Broker 設定 ---
+# 設定 broker 以便此腳本可以發送任務
+dramatiq.set_broker(redis_broker)
 
 
 # --- `scrape` 指令函式 ---
@@ -157,8 +171,12 @@ def run_scrape(settings: Settings, start_date: date, end_date: date):
         time.sleep(settings.BULK_IMPORT_DELAY_SECONDS)
 
     logger.info("所有比賽資料處理完畢，正在更新當前球季累積數據...")
-    # 【修改】明確傳入參數，確保 bulk import 會更新所有球員的生涯數據
     scrape_and_store_season_stats(update_career_stats_for_all=False)
+
+    logger.info("正在觸發官網賽程更新任務...")
+    task_update_schedule_and_reschedule.send()
+    logger.info("賽程更新任務已送出。")
+
     logger.info("--- 步驟 1: 所有日期的批次爬取任務已完成 ---")
 
 
@@ -168,9 +186,19 @@ def run_scrape_career_stats(settings: Settings):
     執行輔助步驟：爬取球隊所有球員的生涯數據。
     """
     logger.info("--- 步驟 A: 開始爬取所有球員的生涯數據 ---")
-    # 【修改】簡化邏輯，直接呼叫核心函式並傳入參數
     scrape_and_store_season_stats(update_career_stats_for_all=True)
     logger.info("--- 步驟 A: 所有球員生涯數據更新完畢 ---")
+
+
+# --- `update-schedule` 指令函式 ---
+def run_update_schedule():
+    """
+    執行更新賽程步驟：觸發 Dramatiq 任務以從官網更新賽程。
+    """
+    logger.info("--- 開始觸發官網賽程更新任務 ---")
+    task_update_schedule_and_reschedule.send()
+    logger.info("賽程更新任務已成功送出。")
+    logger.info("--- 賽程更新任務執行完畢 ---")
 
 
 # --- `upload` 指令函式 ---
@@ -200,6 +228,7 @@ def run_upload(settings: Settings):
         PlayerSeasonStatsDB,
         PlayerSeasonStatsHistoryDB,
         PlayerCareerStatsDB,
+        PlayerFieldingStatsDB,
     ]
 
     try:
@@ -267,6 +296,11 @@ if __name__ == "__main__":
         help="執行輔助步驟：爬取所有球員的生涯數據至 STAGING_DATABASE_URL。",
     )
 
+    parser_update_schedule = subparsers.add_parser(
+        "update-schedule",
+        help="僅從官網更新最新賽程。",
+    )
+
     parser_upload = subparsers.add_parser(
         "upload",
         help="執行步驟二：將暫存資料庫的內容上傳至 PRODUCTION_DATABASE_URL 指定的資料庫。",
@@ -292,6 +326,9 @@ if __name__ == "__main__":
             )
             exit(1)
         run_scrape_career_stats(settings=settings)
+
+    elif args.command == "update-schedule":
+        run_update_schedule()
 
     elif args.command == "upload":
         if not settings.STAGING_DATABASE_URL or not settings.PRODUCTION_DATABASE_URL:
