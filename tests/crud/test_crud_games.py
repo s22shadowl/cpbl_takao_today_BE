@@ -286,8 +286,8 @@ def test_get_completed_games_by_date(db_session):
     assert results[0].status == "已完成"
 
 
-def test_get_next_game_date_after(db_session):
-    """測試 get_next_game_date_after 是否能找到正確的下一個比賽日"""
+def test_get_next_game_schedule_after(db_session):
+    """【修改】測試 get_next_game_schedule_after 是否能找到正確的下一個比賽排程"""
     db = db_session
     # 準備測試資料
     schedule_past = models.GameSchedule(
@@ -313,18 +313,24 @@ def test_get_next_game_date_after(db_session):
     db.commit()
 
     # --- 情境一: 從今天開始找，應找到今天 ---
-    next_date_is_today = games.get_next_game_date_after(db, datetime.date(2025, 8, 15))
-    assert next_date_is_today is not None
-    assert next_date_is_today == datetime.date(2025, 8, 15)
+    next_schedule = games.get_next_game_schedule_after(db, datetime.date(2025, 8, 15))
+    assert next_schedule is not None
+    assert next_schedule.game_id == "SCHED_CUR"
+    assert next_schedule.game_date == datetime.date(2025, 8, 15)
 
     # --- 情境二: 從沒有比賽的明天開始找，應找到未來的最近一天 ---
-    next_date_is_future = games.get_next_game_date_after(db, datetime.date(2025, 8, 16))
-    assert next_date_is_future is not None
-    assert next_date_is_future == datetime.date(2025, 8, 17)
+    next_schedule_is_future = games.get_next_game_schedule_after(
+        db, datetime.date(2025, 8, 16)
+    )
+    assert next_schedule_is_future is not None
+    assert next_schedule_is_future.game_id == "SCHED_NEAR"
+    assert next_schedule_is_future.game_date == datetime.date(2025, 8, 17)
 
     # --- 情境三: 測試沒有未來比賽的情況 ---
-    no_future_date = games.get_next_game_date_after(db, datetime.date(2025, 8, 21))
-    assert no_future_date is None
+    no_future_schedule = games.get_next_game_schedule_after(
+        db, datetime.date(2025, 8, 21)
+    )
+    assert no_future_schedule is None
 
 
 def test_get_last_completed_game_for_teams(db_session):
@@ -391,6 +397,67 @@ def test_get_last_completed_game_for_teams(db_session):
         db, ["不存在的隊伍"], reference_date
     )
     assert no_result_game is None
+
+
+def test_get_last_n_completed_games_for_team(db_session):
+    """【新增】測試 get_last_n_completed_games_for_team 函式"""
+    db = db_session
+    team_name = "測試A隊"
+    # 準備測試資料
+    game1 = models.GameResultDB(
+        cpbl_game_id="N01",
+        game_date=datetime.date(2025, 8, 10),
+        status="已完成",
+        home_team=team_name,
+        away_team="B隊",
+    )
+    game2 = models.GameResultDB(
+        cpbl_game_id="N02",
+        game_date=datetime.date(2025, 8, 12),
+        status="已完成",
+        home_team="C隊",
+        away_team=team_name,
+    )
+    game3 = models.GameResultDB(
+        cpbl_game_id="N03",
+        game_date=datetime.date(2025, 8, 14),
+        status="已完成",
+        home_team=team_name,
+        away_team="D隊",
+    )
+    game4 = models.GameResultDB(  # 未完成，不應被選取
+        cpbl_game_id="N04",
+        game_date=datetime.date(2025, 8, 15),
+        status="未開始",
+        home_team=team_name,
+        away_team="E隊",
+    )
+    game5 = models.GameResultDB(  # 其他隊伍，不應被選取
+        cpbl_game_id="N05",
+        game_date=datetime.date(2025, 8, 13),
+        status="已完成",
+        home_team="F隊",
+        away_team="G隊",
+    )
+    db.add_all([game1, game2, game3, game4, game5])
+    db.commit()
+
+    # 情境 1: 查詢最近 2 場
+    results = games.get_last_n_completed_games_for_team(db, team_name, limit=2)
+    assert len(results) == 2
+    assert results[0].cpbl_game_id == "N03"  # 最新
+    assert results[1].cpbl_game_id == "N02"
+
+    # 情境 2: limit 大於實際比賽數
+    results_all = games.get_last_n_completed_games_for_team(db, team_name, limit=5)
+    assert len(results_all) == 3
+    assert results_all[0].cpbl_game_id == "N03"
+    assert results_all[1].cpbl_game_id == "N02"
+    assert results_all[2].cpbl_game_id == "N01"
+
+    # 情境 3: 查詢不存在的隊伍
+    results_none = games.get_last_n_completed_games_for_team(db, "不存在的隊伍")
+    assert len(results_none) == 0
 
 
 # [T29 新增] 測試 get_games_by_year_and_team 函式

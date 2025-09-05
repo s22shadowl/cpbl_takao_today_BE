@@ -2,7 +2,7 @@
 
 # 【新增】此檔案用於存放通用的、無狀態的解析輔助函式。
 
-from typing import Optional
+from typing import Optional, List
 from app.models import AtBatResultType  # 確保導入 Enum
 from app.core.constants import (  # 導入 Box Score 結果分類
     HITS,
@@ -12,6 +12,8 @@ from app.core.constants import (  # 導入 Box Score 結果分類
     FIELDERS_CHOICE,
     ERRORS,
 )
+
+from app.schemas import GameResult
 
 
 def is_formal_pa(event_description: str) -> bool:
@@ -80,3 +82,105 @@ def map_result_short_to_type(result_short: str) -> Optional[AtBatResultType]:
     if result_short in ERRORS:
         return AtBatResultType.ERROR
     return None
+
+
+def calculate_last_10_games_record(games: List[GameResult], team_name: str) -> str:
+    """
+    從最近的比賽列表中計算指定球隊的近十場戰績。
+
+    :param games: GameResult 物件列表，需依比賽日期由新到舊排序。
+    :param team_name: 要計算戰績的球隊名稱。
+    :return: "勝-敗-和" 格式的字串，例如 "5-5-0"。
+    """
+    if not games:
+        return "0-0-0"
+
+    wins = 0
+    losses = 0
+    ties = 0
+
+    games_to_consider = games[:10]
+
+    for game in games_to_consider:
+        if game.home_score is None or game.away_score is None:
+            continue  # 跳過沒有分數、未完成的比賽
+
+        is_home_team = game.home_team == team_name
+        is_away_team = game.away_team == team_name
+
+        # 如果比賽不包含該球隊，則跳過 (正常情況下不應發生)
+        if not is_home_team and not is_away_team:
+            continue
+
+        if game.home_score == game.away_score:
+            ties += 1
+        elif (is_home_team and game.home_score > game.away_score) or (
+            is_away_team and game.away_score > game.home_score
+        ):
+            wins += 1
+        else:
+            losses += 1
+
+    return f"{wins}-{losses}-{ties}"
+
+
+def calculate_current_streak(games: List[GameResult], team_name: str) -> str:
+    """
+    從最近的比賽列表中計算指定球隊的目前連勝/敗狀況。
+
+    :param games: GameResult 物件列表，需依比賽日期由新到舊排序。
+    :param team_name: 要計算近況的球隊名稱。
+    :return: "X連勝" 或 "X連敗" 格式的字串。若上一場為和局則回傳 "中止"。
+    """
+    if not games:
+        return "無"
+
+    # 檢查最近一場比賽
+    latest_game = games[0]
+    if latest_game.home_score is None or latest_game.away_score is None:
+        return "無"
+
+    is_home_team = latest_game.home_team == team_name
+
+    # 情況 1: 最近一場是和局，連勝/敗中止
+    if latest_game.home_score == latest_game.away_score:
+        return "中止"
+
+    # 情況 2: 判斷最近一場是勝或敗，作為要計算的目標
+    if (is_home_team and latest_game.home_score > latest_game.away_score) or (
+        not is_home_team and latest_game.away_score > latest_game.home_score
+    ):
+        streak_type_to_track = "win"
+    else:
+        streak_type_to_track = "loss"
+
+    streak_length = 0
+    # 從最近的比賽開始往前追溯
+    for game in games:
+        if game.home_score is None or game.away_score is None:
+            break  # 遇到未完成的比賽就停止計算
+
+        is_home = game.home_team == team_name
+
+        # 判斷當前這場比賽的結果
+        current_game_result = ""
+        if game.home_score == game.away_score:
+            # 遇到和局，中斷計算
+            break
+        elif (is_home and game.home_score > game.away_score) or (
+            not is_home and game.away_score > game.home_score
+        ):
+            current_game_result = "win"
+        else:
+            current_game_result = "loss"
+
+        # 如果比賽結果與目標類型相符，計數器加一；否則中斷
+        if current_game_result == streak_type_to_track:
+            streak_length += 1
+        else:
+            break
+
+    if streak_type_to_track == "win":
+        return f"{streak_length}連勝"
+    else:
+        return f"{streak_length}連敗"

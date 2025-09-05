@@ -2,11 +2,9 @@
 
 import logging
 import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Sequence
 
 from sqlalchemy.orm import Session, joinedload
-from typing import Sequence
-
 from sqlalchemy import and_, or_, select, extract
 
 from app import models
@@ -180,19 +178,19 @@ def get_completed_games_by_date(
     return db.execute(statement).unique().scalars().all()
 
 
-def get_next_game_date_after(
+def get_next_game_schedule_after(
     db: Session, after_date: datetime.date
-) -> datetime.date | None:
+) -> models.GameSchedule | None:
     """
-    查詢指定日期的未開始賽事或之後的下一個比賽日期。
+    查詢指定日期的未開始賽事或之後的下一場比賽排程。
     """
     statement = (
-        select(models.GameSchedule.game_date)
+        select(models.GameSchedule)
         .where(models.GameSchedule.game_date >= after_date)
         .order_by(models.GameSchedule.game_date.asc())
         .limit(1)
     )
-    return db.execute(statement).scalar_one_or_none()
+    return db.execute(statement).scalars().first()
 
 
 def get_last_completed_game_for_teams(
@@ -219,6 +217,29 @@ def get_last_completed_game_for_teams(
     )
     # 修正: 加入 .unique() 並使用 .scalars().first() 取得單一 ORM 物件
     return db.execute(statement).unique().scalars().first()
+
+
+def get_last_n_completed_games_for_team(
+    db: Session, team_name: str, limit: int = 10
+) -> Sequence[models.GameResultDB]:
+    """
+    查詢指定球隊最近 N 場已完成的比賽。
+    """
+    statement = (
+        select(models.GameResultDB)
+        .where(
+            and_(
+                models.GameResultDB.status == "已完成",
+                or_(
+                    models.GameResultDB.home_team == team_name,
+                    models.GameResultDB.away_team == team_name,
+                ),
+            )
+        )
+        .order_by(models.GameResultDB.game_date.desc(), models.GameResultDB.id.desc())
+        .limit(limit)
+    )
+    return db.execute(statement).scalars().all()
 
 
 # [T29 新增] 根據年份與球隊名稱查詢賽果

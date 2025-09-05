@@ -273,20 +273,44 @@ class IbbImpactResult(BaseModel):
 # ==============================================================================
 
 
+class NextGameStatus(BaseModel):
+    """下一場比賽的狀態"""
+
+    game_date: datetime.date
+    game_time: Optional[str]
+    matchup: str
+
+
+class TeamRecentStatus(BaseModel):
+    """目標球隊的近期戰況"""
+
+    team_name: str = Field(..., description="球隊名稱")
+    last_10_games_record: str = Field(
+        ..., description="近十場戰績 (勝-敗-和)", examples=["5-5-0"]
+    )
+    current_streak_description: str = Field(
+        ..., description="目前連勝/敗的文字描述", examples=["3連勝", "2連敗", "中止"]
+    )
+
+
 class DashboardHasGamesResponse(BaseModel):
     status: Literal["HAS_TODAY_GAMES"]
-    games: list["GameResultWithDetails"]
+    games: list[GameResultWithDetails]
+    next_game_status: Optional[NextGameStatus] = Field(
+        None, description="下一場比賽狀態"
+    )
 
 
 class DashboardNoGamesResponse(BaseModel):
     status: Literal["NO_TODAY_GAMES"]
-    next_game_date: Union[datetime.date, None] = Field(
-        None,
-        description="下一場比賽的日期",
-        examples=["2025-08-17"],
+    next_game_status: Optional[NextGameStatus] = Field(
+        None, description="下一場比賽狀態"
     )
-    last_target_team_game: Union["GameResultWithDetails", None] = Field(
+    last_target_team_game: Union[GameResultWithDetails, None] = Field(
         None, description="目標球隊的上一場完整比賽數據"
+    )
+    target_team_status: Optional[TeamRecentStatus] = Field(
+        None, description="目標球隊近期戰況"
     )
 
 
