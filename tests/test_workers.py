@@ -318,3 +318,20 @@ def test_task_logs_error_if_cache_clear_fails(mock_task_dependencies):
     mock_requests_post.assert_called_once()
     mock_logger.error.assert_called_once()
     assert "呼叫快取清除 API 時發生錯誤" in mock_logger.error.call_args[0][0]
+
+
+# --- [新增] 測試 E2E 測試任務 ---
+
+
+@patch("app.workers.time.sleep")
+def test_task_e2e_workflow_test(mock_sleep, mock_task_dependencies):
+    """
+    測試 task_e2e_workflow_test 是否正確記錄日誌並等待。
+    """
+    mock_logger = mock_task_dependencies["logger"]
+
+    workers.task_e2e_workflow_test()
+
+    mock_logger.info.assert_any_call("背景任務: E2E 測試任務已啟動，將等待 5 秒...")
+    mock_sleep.assert_called_once_with(5)
+    mock_logger.info.assert_any_call("背景任務: E2E 測試任務已成功完成。")

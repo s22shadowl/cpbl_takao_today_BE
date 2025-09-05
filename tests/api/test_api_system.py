@@ -258,3 +258,43 @@ def test_get_task_status_no_backend_configured(
     assert response.status_code == 501
     json_response = response.json()
     assert json_response["code"] == APIErrorCode.RESULT_BACKEND_NOT_CONFIGURED.value
+
+
+# --- [新增] 測試 /api/system/trigger-e2e-test-task 端點 ---
+
+
+def test_trigger_e2e_test_task_success(client: TestClient):
+    """測試成功觸發 E2E 測試任務。"""
+    with patch("app.api.system.task_e2e_workflow_test.send") as mock_send:
+        mock_task = MagicMock()
+        mock_task.message_id = "e2e_task_id_456"
+        mock_send.return_value = mock_task
+
+        response = client.post(
+            "/api/system/trigger-e2e-test-task",
+            headers={"X-API-Key": settings.API_KEY},
+        )
+
+        assert response.status_code == 200
+        json_response = response.json()
+        assert json_response["message"] == "E2E workflow test task triggered."
+        assert json_response["task_id"] == "e2e_task_id_456"
+        mock_send.assert_called_once()
+
+
+def test_trigger_e2e_test_task_broker_error(client: TestClient):
+    """【修正】測試當 E2E 任務入隊失敗時，端點應回傳 503 Service Unavailable。"""
+    with patch("app.api.system.task_e2e_workflow_test.send") as mock_send:
+        mock_send.side_effect = Exception("Broker connection error")
+
+        response = client.post(
+            "/api/system/trigger-e2e-test-task",
+            headers={"X-API-Key": settings.API_KEY},
+        )
+
+        # 【修正】驗證 ServiceUnavailableException 的回應
+        assert response.status_code == 503
+        json_response = response.json()
+        assert json_response["code"] == APIErrorCode.SERVICE_UNAVAILABLE.value
+        assert "Failed to enqueue E2E test task" in json_response["message"]
+        mock_send.assert_called_once()

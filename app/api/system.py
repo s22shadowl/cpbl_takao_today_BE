@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db import get_db
-from app.workers import task_run_daily_crawl
+from app.workers import task_e2e_workflow_test, task_run_daily_crawl
 
 # [修改] 導入新的例外類別
 from app.exceptions import (
@@ -166,3 +166,25 @@ def get_task_status(task_id: str):
         return {"task_id": task_id, "status": "running"}
     except Exception:
         raise
+
+
+@router.post(
+    "/trigger-e2e-test-task",
+    dependencies=[Depends(verify_api_key)],
+    summary="Trigger E2E Workflow Test Task",
+    description="[僅供 E2E 測試使用] 觸發一個快速完成的背景任務，用於驗證 GHA 工作流的健康度。",
+)
+def trigger_e2e_test_task():
+    """
+    觸發一個輕量級的 E2E 測試背景任務。
+    """
+    # 【修正】增加 try/except 區塊以捕捉 Broker 錯誤並回傳 503
+    try:
+        task = task_e2e_workflow_test.send()
+        return {
+            "message": "E2E workflow test task triggered.",
+            "task_id": task.message_id,
+        }
+    except Exception as e:
+        logging.error(f"Failed to trigger E2E test task: {e}", exc_info=True)
+        raise ServiceUnavailableException(message="Failed to enqueue E2E test task.")

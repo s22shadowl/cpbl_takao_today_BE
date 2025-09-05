@@ -1,0 +1,99 @@
+# .github/workflows/e2e_workflow_health_check.yml
+
+name: E2E 測試：GHA 工作流健康度檢查
+
+on:
+  # 允許手動從 GitHub Actions 頁面觸發此 workflow
+  workflow_dispatch:
+
+  # 每次推送到 main 分支且 CI/CD 部署完成後觸發
+  push:
+    branches:
+      - main
+
+jobs:
+  run-e2e-workflow-test:
+    name: 執行 GHA 工作流 E2E 測試
+    runs-on: ubuntu-latest
+    # 確保部署成功後才執行
+    # needs: deploy
+    steps:
+      - name: 安裝 flyctl
+        run: |
+          curl -L https://fly.io/install.sh | sh
+          echo "/home/runner/.fly/bin" >> $GITHUB_PATH
+
+      - name: 步驟 1：啟動生產環境機器 (Web & Worker)
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "正在啟動 web 與 worker 機器..."
+          fly machine start --app cpbl-takao-today-be --select process=web
+          fly machine start --app cpbl-takao-today-be --select process=worker
+
+      - name: 步驟 2： 等待 Web 服務健康檢查
+        run: |
+          timeout 180s bash -c ' \
+            until curl -s -f https://cpbl-takao-today-be.fly.dev/api/system/health; \
+            do \
+              echo "Web 服務尚未就緒，等待中..."; \
+              sleep 5; \
+            done; \
+            echo "Web 服務已回報健康！"; \
+          ' || (echo "健康檢查在 3 分鐘後超時。" && exit 1)
+
+      - name: 步驟 3： 觸發 E2E 測試任務並取得 Task ID
+        id: trigger
+        run: |
+          API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-e2e-test-task"
+          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.API_KEY }}" $API_URL)
+          TASK_ID=$(echo $RESPONSE_JSON | jq -r .task_id)
+          echo "E2E 測試任務已觸發，Task ID: $TASK_ID"
+          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+
+      - name: 步驟 4 & 5： 監控任務狀態並進行斷言
+        if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
+        run: |
+          TASK_ID=${{ steps.trigger.outputs.task_id }}
+          STATUS_URL="https://cpbl-takao-today-be.fly.dev/api/system/task-status/$TASK_ID"
+          TIMEOUT=60
+          INTERVAL=5
+          ELAPSED=0
+
+          echo "正在監控 Task ID: $TASK_ID..."
+
+          while [ $ELAPSED -lt $TIMEOUT ]; do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.API_KEY }}" $STATUS_URL)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | sed '$d')
+
+            if [ "$HTTP_CODE" -ne 200 ]; then
+              echo "輪詢狀態時發生錯誤: HTTP $HTTP_CODE。重試中..."
+            else
+              STATUS=$(echo $BODY | jq -r .status)
+              echo "目前任務狀態: $STATUS (已耗時: ${ELAPSED}s)"
+
+              if [ "$STATUS" == "succeeded" ]; then
+                echo "✅ E2E 測試成功！任務已如預期完成。"
+                exit 0
+              elif [ "$STATUS" == "failed" ]; then
+                echo "❌ E2E 測試失敗！任務回報 failed 狀態。"
+                exit 1
+              fi
+            fi
+
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "❌ E2E 測試失敗！在 ${TIMEOUT} 秒後超時。"
+          exit 1
+
+      - name: 步驟 6： 關閉機器 (無論成功或失敗都執行)
+        if: always()
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "正在關閉 web 與 worker 機器..."
+          fly machine stop --app cpbl-takao-today-be --select process=web
+          fly machine stop --app cpbl-takao-today-be --select process=worker

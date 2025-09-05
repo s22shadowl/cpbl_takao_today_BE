@@ -10,6 +10,7 @@ import ssl
 import requests
 from datetime import datetime
 import pytz
+import time
 
 from app.db import SessionLocal
 from app.crud import games as crud_games
@@ -223,3 +224,14 @@ def task_scrape_entire_year(year_str: Optional[str] = None):
         logger.error(
             f"Dramatiq Worker 在執行逐年爬蟲任務時發生嚴重錯誤: {e}", exc_info=True
         )
+
+
+@dramatiq.actor(max_retries=0, time_limit=60 * 1000)  # 1 分鐘超時
+def task_e2e_workflow_test():
+    """
+    [僅供 T11 E2E 測試使用]
+    一個輕量級的測試任務，僅等待數秒後就成功返回。
+    """
+    logger.info("背景任務: E2E 測試任務已啟動，將等待 5 秒...")
+    time.sleep(5)
+    logger.info("背景任務: E2E 測試任務已成功完成。")
