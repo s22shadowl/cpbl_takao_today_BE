@@ -227,7 +227,7 @@ def task_scrape_entire_year(year_str: Optional[str] = None):
         )
 
 
-@dramatiq.actor(broker=broker, max_retries=0, time_limit=60 * 1000)
+@dramatiq.actor(broker=broker, max_retries=0, time_limit=60 * 1000, store_results=True)
 def task_e2e_workflow_test():
     """
     [僅供 E2E 測試使用]

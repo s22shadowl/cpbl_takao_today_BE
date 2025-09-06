@@ -2,6 +2,7 @@
 
 import logging
 from typing import Annotated
+from types import SimpleNamespace
 
 from fastapi.params import Header
 
@@ -139,26 +140,30 @@ def get_task_status(task_id: str):
     """
     result_backend = broker.get_results_backend()
     if not result_backend:
-        # [修正] 拋出特定的 HTTPException，讓 FastAPI 正確處理並回傳 501
         raise ResultBackendNotConfiguredException(message="Result backend 未設定")
 
-    try:
-        # 使用 message_id 查結果
-        result = result_backend.get_result(task_id, block=False)
+    # [修正] Dramatiq 的 get_result 預期接收一個有 .message_id, .queue_name, 和 .actor_name
+    # 屬性的物件。我們建立一個符合此介面的簡易物件。
+    # TODO: 讓此端點更通用，能夠處理來自不同 actor 的任務。
+    mock_message = SimpleNamespace(
+        message_id=task_id, queue_name="default", actor_name="task_e2e_workflow_test"
+    )
 
-        # result 可能是 Exception 或真實結果
+    try:
+        result = result_backend.get_result(mock_message, block=False)
         if isinstance(result, Exception):
             return {"task_id": task_id, "status": "failed"}
-        else:
-            return {"task_id": task_id, "status": "succeeded"}
+        return {"task_id": task_id, "status": "succeeded"}
     except ResultMissing:
         logging.info(
-            f"Task {task_id} result is missing. "
-            f"Assuming it is still running, has never existed, or the result has expired."
+            f"Task {task_id} result is missing, assuming it is still running or has expired."
         )
         return {"task_id": task_id, "status": "running"}
-    except Exception:
-        raise
+    except Exception as e:
+        logging.error(f"查詢任務 {task_id} 狀態時發生未預期的錯誤: {e}", exc_info=True)
+        raise ServiceUnavailableException(
+            message=f"An unexpected error occurred while fetching task status: {e}"
+        )
 
 
 @router.post(
