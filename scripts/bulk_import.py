@@ -41,11 +41,15 @@ import time
 import argparse
 from datetime import date
 from dateutil.relativedelta import relativedelta
-import dramatiq
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import IntegrityError
+
+# --- [修正] 確保 Broker 設定在載入任何 actor 之前執行 ---
+# 必須先匯入此模組來設定全域 Broker，
+# 否則 worker 模組中的 actor 會被綁定到預設的 localhost broker。
+import app.broker_setup  # noqa: F401
 
 from app.config import settings, Settings
 from app.core import fetcher
@@ -62,16 +66,12 @@ from app.models import (
     PlayerFieldingStatsDB,
 )
 from app.logging_config import setup_logging
-from app.workers import task_update_schedule_and_reschedule, redis_broker
+from app.workers import task_update_schedule_and_reschedule
 
 
 # --- 初始化 ---
 setup_logging()
 logger = logging.getLogger(__name__)
-
-# --- Dramatiq Broker 設定 ---
-# 設定 broker 以便此腳本可以發送任務
-dramatiq.set_broker(redis_broker)
 
 
 # --- `scrape` 指令函式 ---

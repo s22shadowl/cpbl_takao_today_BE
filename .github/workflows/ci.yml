@@ -113,7 +113,7 @@ jobs:
           fi
 
           echo "Starting Worker service with xvfb..."
-          poetry run xvfb-run dramatiq app.workers:redis_broker app.workers --processes 2 > worker.log 2>&1 &
+          poetry run xvfb-run dramatiq app.broker_setup:broker app.workers --processes 2 > worker.log 2>&1 &
 
           # [修正] 使用 redis-cli 輪詢來取代 sleep，確保 worker 已就緒
           echo "Waiting for Worker service to be ready..."

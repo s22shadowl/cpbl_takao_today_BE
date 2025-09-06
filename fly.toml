@@ -46,16 +46,16 @@ kill_timeout = "300s"
   auto_start_machines = false
   min_machines_running = 0
 
-  [[services.checks]]
-    type = "tcp"
-    port = 8080
-    interval = "15s"
-    timeout = "2s"
-    grace_period = "30s"
+  #[[services.checks]]
+  #  type = "tcp"
+  #  port = 8080
+  #  interval = "15s"
+  #  timeout = "2s"
+  #  grace_period = "30s"
 
   [[services.http_checks]]
-    interval = "1h"
-    timeout = "30s"
+    interval = "15s"
+    timeout = "5s"
     grace_period = "30s"
     method = "get"
     path = "/api/system/health"

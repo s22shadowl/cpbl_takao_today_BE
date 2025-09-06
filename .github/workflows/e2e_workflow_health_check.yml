@@ -1,19 +1,24 @@
 # .github/workflows/e2e_workflow_health_check.yml
 
-name: E2E 測試：GHA 工作流健康度檢查
+name: Post-Deploy：生產環境健康度檢查
 
 on:
   # 允許手動從 GitHub Actions 頁面觸發此 workflow
   workflow_dispatch:
 
-  # 每次推送到 main 分支且 CI/CD 部署完成後觸發
-  push:
+  # 當名為 "Python CI/CD" 的 workflow 在 main 分支上成功完成時觸發
+  workflow_run:
+    workflows: ["Python CI/CD"]
+    types:
+      - completed
     branches:
       - main
 
 jobs:
   run-e2e-workflow-test:
-    name: 執行 GHA 工作流 E2E 測試
+    name: 執行生產環境 E2E 測試
+    # 新增一個條件，確保只有在觸發的 workflow 成功時才執行
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - name: 安裝 flyctl 與 jq
@@ -22,20 +27,20 @@ jobs:
           echo "/home/runner/.fly/bin" >> $GITHUB_PATH
           sudo apt-get update && sudo apt-get install -y jq
 
-      - name: 步驟 1：擴展並啟動生產環境機器 (Web & Worker)
-        # [修改]
-        # 原本的 `fly machine list | jq` 流程過於脆弱，
-        # 因為 API 對 'stopped' 狀態的機器回傳的 JSON 結構可能不同，導致 jq 解析失敗。
-        # 改為使用宣告式的 `fly scale count`，它不關心當前狀態，
-        # 而是直接命令平台達成「有 N 台機器在運行」的最終目標，這更為強健。
+      - name: 步驟 1：確保環境乾淨後，再啟動測試機器 (Web & Worker)
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
           APP_NAME="cpbl-takao-today-be"
-          echo "正在確保 web process group 至少有一台機器運行..."
-          fly scale count web=1 --app $APP_NAME --yes
-          echo "正在確保 worker process group 至少有一台機器運行..."
-          fly scale count worker=1 --app $APP_NAME --yes
+          echo "步驟 1.1：強制縮減所有機器至 0，確保測試起始狀態乾淨..."
+          fly scale count web=0 worker=0 --app $APP_NAME --yes
+
+          # 等待幾秒鐘讓平台完成縮減操作
+          echo "等待 5 秒以確保機器已完全停止..."
+          sleep 5
+
+          echo "步驟 1.2：啟動一台 web 和一台 worker 進行測試..."
+          fly scale count web=1 worker=1 --app $APP_NAME --yes
           echo "Web 與 Worker 機器已啟動。"
 
       - name: 步驟 2： 等待 Web 服務健康檢查
@@ -49,33 +54,87 @@ jobs:
             echo "Web 服務已回報健康！"; \
           ' || (echo "健康檢查在 3 分鐘後超時。" && exit 1)
 
-      - name: 步驟 3： 觸發 E2E 測試任務並取得 Task ID
+      - name: 步驟 3： 觸發 E2E 測試任務並取得 Task ID（帶 curl retry）
         id: trigger
         run: |
           API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-e2e-test-task"
-          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $API_URL)
-          TASK_ID=$(echo $RESPONSE_JSON | jq -r .task_id)
-          echo "E2E 測試任務已觸發，Task ID: $TASK_ID"
-          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+          MAX_RETRIES=5
+          RETRY_INTERVAL=5
+          TASK_ID=""
 
-      - name: 步驟 4 & 5： 監控任務狀態並進行斷言
+          for ((i=1; i<=$MAX_RETRIES; i++)); do
+            echo "正在嘗試呼叫 API (第 $i/$MAX_RETRIES 次)..."
+
+            RESPONSE=$(curl --http1.1 --tlsv1.2 -s -D headers.txt -o body.json -w "%{http_code}" -X POST \
+              -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $API_URL) \
+              && CURL_EXIT=0 || CURL_EXIT=$?
+
+            if [ $CURL_EXIT -ne 0 ]; then
+              echo "⚠️ curl 嘗試 $i/$MAX_RETRIES 失敗 (exit code $CURL_EXIT)，$RETRY_INTERVAL 秒後重試..."
+              sleep $RETRY_INTERVAL
+              continue
+            fi
+
+            HTTP_STATUS_CODE=$RESPONSE
+            echo "API 回應狀態碼: $HTTP_STATUS_CODE"
+            echo "API 回應 Header:"
+            cat headers.txt
+            echo "API 回應 Body:"
+            cat body.json
+
+            if [[ $HTTP_STATUS_CODE -ge 200 && $HTTP_STATUS_CODE -le 299 ]]; then
+              TASK_ID=$(jq -r .task_id body.json)
+              echo "E2E 測試任務已觸發，Task ID: $TASK_ID"
+              echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            echo "API 呼叫未成功，將在 $RETRY_INTERVAL 秒後重試..."
+            sleep $RETRY_INTERVAL
+          done
+
+          echo "::error::經過 $MAX_RETRIES 次嘗試後，API 呼叫仍然失敗。"
+          exit 1
+
+      - name: 步驟 4 & 5： 監控任務狀態並進行斷言（帶 curl retry）
         if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
         run: |
           TASK_ID=${{ steps.trigger.outputs.task_id }}
           STATUS_URL="https://cpbl-takao-today-be.fly.dev/api/system/task-status/$TASK_ID"
           TIMEOUT=60
           INTERVAL=5
+          CURL_RETRIES=3
           ELAPSED=0
 
           echo "正在監控 Task ID: $TASK_ID..."
 
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $STATUS_URL)
+            attempt=1
+            while [ $attempt -le $CURL_RETRIES ]; do
+              RESPONSE=$(curl --http1.1 --tlsv1.2 -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $STATUS_URL) \
+                && CURL_EXIT=0 || CURL_EXIT=$?
+
+              if [ $CURL_EXIT -eq 0 ]; then
+                break
+              else
+                echo "⚠️ curl 嘗試 $attempt/$CURL_RETRIES 失敗 (exit code $CURL_EXIT)，5 秒後重試..."
+                sleep 5
+                attempt=$((attempt + 1))
+              fi
+            done
+
+            if [ $CURL_EXIT -ne 0 ]; then
+              echo "❌ curl 連線失敗，無法取得任務狀態，繼續下一輪輪詢..."
+              sleep $INTERVAL
+              ELAPSED=$((ELAPSED + INTERVAL))
+              continue
+            fi
+
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
             BODY=$(echo "$RESPONSE" | sed '$d')
 
             if [ "$HTTP_CODE" -ne 200 ]; then
-              echo "輪詢狀態時發生錯誤: HTTP $HTTP_CODE。重試中..."
+              echo "輪詢狀態時發生 HTTP 錯誤: $HTTP_CODE，將在 $INTERVAL 秒後重試..."
             else
               STATUS=$(echo $BODY | jq -r .status)
               echo "目前任務狀態: $STATUS (已耗時: ${ELAPSED}s)"

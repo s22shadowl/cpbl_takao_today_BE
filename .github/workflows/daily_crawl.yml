@@ -1,32 +1,42 @@
 # .github/workflows/daily_crawl.yml
-name: Daily Crawl CI
+name: Daily Crawl
 
 on:
   schedule:
     # 每日 14:00 UTC (台北時間 22:00) 執行。
     - cron: "0 14 * * *"
-  # workflow_dispatch 允許你從 GitHub Actions 頁面手動觸發此 workflow
   workflow_dispatch:
+
+# [優化] 新增併發控制，防止手動觸發時與排程任務同時運行
+concurrency:
+  group: ${{ github.workflow }}-daily-crawl
+  cancel-in-progress: true
 
 jobs:
   run-daily-crawl:
     name: Run Daily Crawler
     runs-on: ubuntu-latest
     steps:
-      - name: Install flyctl
+      - name: Install flyctl and jq
         run: |
           curl -L https://fly.io/install.sh | sh
           echo "/home/runner/.fly/bin" >> $GITHUB_PATH
+          sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Start Machines (Web & Worker)
+      - name: Step 1： Ensure clean state, then start machines
+        # [修正] 借鑑 E2E workflow 的經驗，先歸零再啟動，確保狀態可預測
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          echo "Starting web and worker machines..."
-          fly machine start --app cpbl-takao-today-be --select process=web
-          fly machine start --app cpbl-takao-today-be --select process=worker
+          APP_NAME="cpbl-takao-today-be"
+          echo "Ensuring a clean state by scaling all machines to 0..."
+          fly scale count web=0 worker=0 --app $APP_NAME --yes
+          echo "Waiting 5 seconds for machines to stop..."
+          sleep 5
+          echo "Starting one web and one worker machine for the task..."
+          fly scale count web=1 worker=1 --app $APP_NAME --yes
 
-      - name: Wait for Web Service Health Check
+      - name: Step 2：Wait for Web Service Health Check
         run: |
           timeout 180s bash -c ' \
             until curl -s -f https://cpbl-takao-today-be.fly.dev/api/system/health; \
@@ -37,44 +47,64 @@ jobs:
             echo "Web service is healthy!"; \
           ' || (echo "Health check timed out after 3 minutes." && exit 1)
 
-      - name: Trigger Crawl Task and Get Task ID
+      - name: Step 3： Trigger Crawl Task and Get Task ID
         id: trigger
         run: |
           API_URL="https://cpbl-takao-today-be.fly.dev/api/system/trigger-daily-crawl"
+          # [優化] 增加重試機制，提高 API 呼叫的成功率
+          for i in {1..5}; do
+            RESPONSE_JSON=$(curl -s -w "\nHTTP_CODE:%{http_code}" -X POST -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $API_URL)
+            HTTP_BODY=$(echo "$RESPONSE_JSON" | sed '$d')
+            HTTP_STATUS_CODE=$(echo "$RESPONSE_JSON" | tail -n1 | cut -d: -f2)
 
-          # 使用 jq 來解析 JSON 回應並獲取 task_id
-          RESPONSE_JSON=$(curl -f -s -X POST -H "X-API-Key: ${{ secrets.API_KEY }}" $API_URL)
-          TASK_ID=$(echo $RESPONSE_JSON | jq -r .task_id)
+            if [[ $HTTP_STATUS_CODE -ge 200 && $HTTP_STATUS_CODE -le 299 ]]; then
+              TASK_ID=$(echo $HTTP_BODY | jq -r .task_id)
+              echo "Task triggered successfully with ID: $TASK_ID"
+              echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            echo "Failed to trigger task (HTTP $HTTP_STATUS_CODE), retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::Could not trigger crawl task after 5 attempts."
+          exit 1
+        # [修正] 建議統一使用 PROD_API_KEY 以保持一致性，如果你的 API_KEY 是刻意為此任務設定的則忽略此條
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          # 注意: 這裡的 API Key 建議與 e2e workflow 統一，例如都用 PROD_API_KEY
+          # 如果是刻意使用不同的 key，請忽略此註解。
+          PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
 
-          echo "Task triggered with ID: $TASK_ID"
-          # 將 task_id 設為後續步驟可用的輸出
-          echo "task_id=$TASK_ID" >> $GITHUB_OUTPUT
+      - name: Step 4： Stop Web Machine to Save Costs
+        # [優化] 任務已觸發，不再需要 web 機器，將其關閉以節省成本
+        if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          echo "Task is running on the worker. Stopping web machine to save costs..."
+          fly scale count web=0 --app cpbl-takao-today-be --yes
 
-      - name: Monitor Task Status
+      - name: Step 5： Monitor Task Status
         if: steps.trigger.outputs.task_id != '' && steps.trigger.outputs.task_id != 'null'
         run: |
+          # ... 監控邏輯不變 ...
           TASK_ID=${{ steps.trigger.outputs.task_id }}
           STATUS_URL="https://cpbl-takao-today-be.fly.dev/api/system/task-status/$TASK_ID"
-
-          # 設定超時時間 (30 分鐘 = 1800 秒)
           TIMEOUT=1800
-          # 設定輪詢間隔 (30 秒)
           INTERVAL=30
           ELAPSED=0
-
           echo "Monitoring task $TASK_ID..."
-
           while [ $ELAPSED -lt $TIMEOUT ]; do
-            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.API_KEY }}" $STATUS_URL)
+            # ... 此處的 curl 請求必須由 GitHub Actions Runner 發出，而非 fly.io 上的 web 機器
+            # 因為 web 機器可能已經被我們關閉了。這是正確的作法。
+            RESPONSE=$(curl -s -w "\n%{http_code}" -H "X-API-Key: ${{ secrets.PROD_API_KEY }}" $STATUS_URL)
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
             BODY=$(echo "$RESPONSE" | sed '$d')
-
             if [ "$HTTP_CODE" -ne 200 ]; then
-              echo "Error polling status: HTTP $HTTP_CODE. Retrying..."
+              echo "Error polling status: HTTP $HTTP_CODE. The service might be temporarily unavailable. Retrying..."
             else
               STATUS=$(echo $BODY | jq -r .status)
               echo "Current task status: $STATUS (Elapsed: ${ELAPSED}s)"
-
               if [ "$STATUS" == "succeeded" ]; then
                 echo "Task succeeded!"
                 exit 0
@@ -83,20 +113,20 @@ jobs:
                 exit 1
               fi
             fi
-
             sleep $INTERVAL
             ELAPSED=$((ELAPSED + INTERVAL))
           done
-
-          echo "Timeout reached after ${TIMEOUT}s. Assuming task is stuck and proceeding to shutdown."
+          echo "Timeout reached after ${TIMEOUT}s. Task failed."
           exit 1
+        env:
+          PROD_API_KEY: ${{ secrets.PROD_API_KEY }}
 
-      - name: Stop Machines (Always Run)
-        # `if: always()` 確保無論前面步驟成功或失敗，此步驟都會執行，以節省成本。
+      - name: Step 6： Stop All Machines (Always Run)
+        # [修正] 使用 fly scale count 0 來確保所有東西都被關閉
         if: always()
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          echo "Stopping web and worker machines..."
-          fly machine stop --app cpbl-takao-today-be --select process=web
-          fly machine stop --app cpbl-takao-today-be --select process=worker
+          echo "Stopping any remaining machines..."
+          fly scale count web=0 worker=0 --app cpbl-takao-today-be --yes
+          echo "All machines have been scaled to zero."

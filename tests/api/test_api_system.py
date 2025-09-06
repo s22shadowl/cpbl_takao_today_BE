@@ -11,7 +11,7 @@ from app.db import get_db
 from dramatiq.results.errors import ResultMissing
 import redis
 from app.exceptions import APIErrorCode
-
+from fastapi import status
 
 # --- 測試 /api/system/health 端點 ---
 
@@ -24,12 +24,12 @@ def test_health_check_all_ok(client: TestClient):
 
     with patch("app.api.system.redis_client", mock_redis):
         response = client.get("/api/system/health")
-        assert response.status_code == 200
-        assert response.json() == {
-            "status": "ok",
-            "database": "ok",
-            "redis": "ok",
-        }
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "database": "ok",
+        "redis": "ok",
+    }
 
 
 def test_health_check_db_error(client: TestClient):
@@ -131,7 +131,6 @@ def test_clear_cache_redis_error(
         response = client.post(
             "/api/system/clear-cache", headers={"X-API-Key": settings.API_KEY}
         )
-        # [修正] 驗證 ServiceUnavailableException 的回應
         assert response.status_code == 503
         json_response = response.json()
         assert json_response["code"] == APIErrorCode.SERVICE_UNAVAILABLE.value
@@ -168,7 +167,6 @@ def test_trigger_daily_crawl_broker_error(client: TestClient):
             "/api/system/trigger-daily-crawl", headers={"X-API-Key": settings.API_KEY}
         )
 
-        # [修正] 驗證 ServiceUnavailableException 的回應
         assert response.status_code == 503
         json_response = response.json()
         assert json_response["code"] == APIErrorCode.SERVICE_UNAVAILABLE.value
@@ -182,17 +180,16 @@ def test_trigger_daily_crawl_broker_error(client: TestClient):
 @pytest.fixture
 def mock_broker():
     """提供一個 mock 的 Dramatiq broker。"""
-    with patch("app.api.system.dramatiq.get_broker") as mock_get_broker:
-        mock_broker_instance = MagicMock()
+    # [修正] patch 的目標是 app.api.system 模組中被 import 的 broker 物件
+    with patch("app.api.system.broker") as mock_broker_instance:
         mock_result_backend = MagicMock()
-        mock_broker_instance.get_result_backend.return_value = mock_result_backend
-        mock_get_broker.return_value = mock_broker_instance
+        mock_broker_instance.get_results_backend.return_value = mock_result_backend
         yield mock_broker_instance
 
 
 def test_get_task_status_succeeded(client: TestClient, mock_broker: MagicMock):
     """測試查詢已成功完成的任務狀態。"""
-    mock_broker.get_result_backend().get_result.return_value = "some_result"
+    mock_broker.get_results_backend().get_result.return_value = "some_result"
 
     response = client.get(
         "/api/system/task-status/some_task_id", headers={"X-API-Key": settings.API_KEY}
@@ -204,7 +201,9 @@ def test_get_task_status_succeeded(client: TestClient, mock_broker: MagicMock):
 
 def test_get_task_status_failed(client: TestClient, mock_broker: MagicMock):
     """測試查詢已失敗的任務狀態。"""
-    mock_broker.get_result_backend().get_result.return_value = ValueError("Task failed")
+    mock_broker.get_results_backend().get_result.return_value = ValueError(
+        "Task failed"
+    )
 
     response = client.get(
         "/api/system/task-status/some_task_id", headers={"X-API-Key": settings.API_KEY}
@@ -216,7 +215,7 @@ def test_get_task_status_failed(client: TestClient, mock_broker: MagicMock):
 
 def test_get_task_status_running(client: TestClient, mock_broker: MagicMock):
     """測試查詢仍在運行中的任務狀態 (因 ResultMissing 異常)。"""
-    mock_broker.get_result_backend().get_result.side_effect = ResultMissing(
+    mock_broker.get_results_backend().get_result.side_effect = ResultMissing(
         "Result not ready."
     )
 
@@ -230,8 +229,7 @@ def test_get_task_status_running(client: TestClient, mock_broker: MagicMock):
 
 def test_get_task_status_unknown_id(client: TestClient, mock_broker: MagicMock):
     """[新增] 測試查詢一個不存在或結果已過期的任務 ID。"""
-    # [修正] 建立 ResultMissing 實例時提供必要的 message 參數
-    mock_broker.get_result_backend().get_result.side_effect = ResultMissing(
+    mock_broker.get_results_backend().get_result.side_effect = ResultMissing(
         "Result not ready."
     )
 
@@ -241,7 +239,6 @@ def test_get_task_status_unknown_id(client: TestClient, mock_broker: MagicMock):
     )
 
     assert response.status_code == 200
-    # 根據目前的邏輯，ResultMissing 會被視為 running
     assert response.json() == {"task_id": "a_non_existent_id", "status": "running"}
 
 
@@ -249,15 +246,17 @@ def test_get_task_status_no_backend_configured(
     client: TestClient, mock_broker: MagicMock
 ):
     """測試當 result backend 未設定時，應回傳 501 錯誤。"""
-    mock_broker.get_result_backend.return_value = None
+    mock_broker.get_results_backend.return_value = None
 
     response = client.get(
         "/api/system/task-status/some_task_id", headers={"X-API-Key": settings.API_KEY}
     )
 
-    assert response.status_code == 501
+    # 【修正】修改斷言以符合實際拋出的 HTTPException
+    assert response.status_code == status.HTTP_501_NOT_IMPLEMENTED
     json_response = response.json()
     assert json_response["code"] == APIErrorCode.RESULT_BACKEND_NOT_CONFIGURED.value
+    assert "Result backend 未設定" in json_response["message"]
 
 
 # --- [新增] 測試 /api/system/trigger-e2e-test-task 端點 ---
@@ -292,7 +291,6 @@ def test_trigger_e2e_test_task_broker_error(client: TestClient):
             headers={"X-API-Key": settings.API_KEY},
         )
 
-        # 【修正】驗證 ServiceUnavailableException 的回應
         assert response.status_code == 503
         json_response = response.json()
         assert json_response["code"] == APIErrorCode.SERVICE_UNAVAILABLE.value

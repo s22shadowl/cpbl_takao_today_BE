@@ -63,7 +63,7 @@ services:
       - .:/code
       - worker_venv:/code/.venv
     working_dir: /code
-    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.workers:redis_broker app.workers --worker-shutdown-timeout 285000"
+    command: sh -c "export PYTHONPATH=. && export DISPLAY=:99 && dramatiq app.broker_setup:broker app.workers --worker-shutdown-timeout 285000"
     env_file:
       - .env
     depends_on:

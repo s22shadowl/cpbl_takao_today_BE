@@ -5,8 +5,8 @@ from typing import Annotated
 
 from fastapi.params import Header
 
-import dramatiq
 from dramatiq.results.errors import ResultMissing
+from app.broker_setup import broker
 
 from app.cache import redis_client
 from app.config import settings
@@ -20,8 +20,8 @@ from app.workers import task_e2e_workflow_test, task_run_daily_crawl
 # [修改] 導入新的例外類別
 from app.exceptions import (
     InvalidCredentialsException,
-    ResultBackendNotConfiguredException,
     ServiceUnavailableException,
+    ResultBackendNotConfiguredException,
 )
 
 router = APIRouter(
@@ -135,29 +135,22 @@ def trigger_daily_crawl_task():
 def get_task_status(task_id: str):
     """
     查詢指定 task_id 的執行狀態。
-    可能的狀態: running, succeeded, failed, unknown
+    可能的狀態: running, succeeded, failed
     """
-    broker = dramatiq.get_broker()
-    result_backend = broker.get_result_backend()
+    result_backend = broker.get_results_backend()
     if not result_backend:
-        raise ResultBackendNotConfiguredException()
+        # [修正] 拋出特定的 HTTPException，讓 FastAPI 正確處理並回傳 501
+        raise ResultBackendNotConfiguredException(message="Result backend 未設定")
 
     try:
-        message = dramatiq.Message(
-            queue_name="default",
-            actor_name="unknown",
-            args=(),
-            kwargs={},
-            options={},
-            message_id=task_id,
-        )
-        stored_result = result_backend.get_result(message, block=False)
+        # 使用 message_id 查結果
+        result = result_backend.get_result(task_id, block=False)
 
-        if isinstance(stored_result, Exception):
-            logging.warning(f"Task {task_id} failed with exception: {stored_result}")
+        # result 可能是 Exception 或真實結果
+        if isinstance(result, Exception):
             return {"task_id": task_id, "status": "failed"}
-
-        return {"task_id": task_id, "status": "succeeded"}
+        else:
+            return {"task_id": task_id, "status": "succeeded"}
     except ResultMissing:
         logging.info(
             f"Task {task_id} result is missing. "

@@ -2,17 +2,15 @@
 
 import logging
 import dramatiq
-from dramatiq.brokers.redis import RedisBroker
-from dramatiq.results import Results
-from dramatiq.results.backends.redis import RedisBackend
 from typing import Optional, List, Dict
-import ssl
 import requests
 from datetime import datetime
 import pytz
 import time
 import redis
 
+# [修正] 從我們建立的設定檔中匯入 broker 實例
+from app.broker_setup import broker
 from app.db import SessionLocal
 from app.crud import games as crud_games
 from app.core import fetcher
@@ -25,22 +23,6 @@ from app.exceptions import RetryableScraperError, FatalScraperError, GameNotFina
 
 logger = logging.getLogger(__name__)
 
-# --- Broker 設定 ---
-broker_url = settings.DRAMATIQ_BROKER_URL
-broker_options = {}
-
-if broker_url.startswith("rediss://"):
-    broker_options = {
-        "ssl": True,
-        "ssl_cert_reqs": ssl.CERT_NONE,
-        "socket_connect_timeout": 10,
-        "socket_timeout": 10,
-    }
-
-result_backend = RedisBackend(url=broker_url, **broker_options)
-redis_broker = RedisBroker(url=broker_url, **broker_options)
-redis_broker.add_middleware(Results(backend=result_backend))
-dramatiq.set_broker(redis_broker)
 
 # --- CI/CD 信號 ---
 # [新增] 在 Dramatiq worker 啟動時，此模組會被載入，這段程式碼會被執行。
@@ -82,7 +64,7 @@ def should_retry_scraper_task(retries_so_far: int, exception: Exception) -> bool
 # --- 任務定義 (Actors) ---
 
 
-@dramatiq.actor(max_retries=0)
+@dramatiq.actor(broker=broker, max_retries=0)
 def task_run_daily_crawl():
     """
     由 GHA 自動化流程觸發的每日例行爬蟲任務的進入點。
@@ -126,6 +108,7 @@ def task_run_daily_crawl():
 
 
 @dramatiq.actor(
+    broker=broker,
     max_retries=settings.DRAMATIQ_MAX_RETRIES,
     min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
@@ -150,6 +133,7 @@ def task_update_schedule_and_reschedule():
 
 
 @dramatiq.actor(
+    broker=broker,
     max_retries=settings.DRAMATIQ_MAX_RETRIES,
     min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
@@ -205,6 +189,7 @@ def task_scrape_single_day(
 
 
 @dramatiq.actor(
+    broker=broker,
     max_retries=settings.DRAMATIQ_MAX_RETRIES,
     min_backoff=settings.DRAMATIQ_RETRY_BACKOFF,
     retry_when=should_retry_scraper_task,
@@ -225,7 +210,7 @@ def task_scrape_entire_month(month_str: Optional[str] = None):
         )
 
 
-@dramatiq.actor
+@dramatiq.actor(broker=broker)
 def task_scrape_entire_year(year_str: Optional[str] = None):
     """抓取全年比賽數據的任務。"""
     logger.info(f"--- Dramatiq Worker: 執行逐年爬蟲任務 for {year_str or '今年'} ---")
@@ -242,7 +227,7 @@ def task_scrape_entire_year(year_str: Optional[str] = None):
         )
 
 
-@dramatiq.actor(max_retries=0, time_limit=60 * 1000)  # 1 分鐘超時
+@dramatiq.actor(broker=broker, max_retries=0, time_limit=60 * 1000)
 def task_e2e_workflow_test():
     """
     [僅供 E2E 測試使用]
@@ -251,3 +236,6 @@ def task_e2e_workflow_test():
     logger.info("背景任務: E2E 測試任務已啟動，將等待 5 秒...")
     time.sleep(5)
     logger.info("背景任務: E2E 測試任務已成功完成。")
+
+    # 加上這一行，讓結果後端可以儲存「成功」的狀態
+    return True
